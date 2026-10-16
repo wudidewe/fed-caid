@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "description": "Optional exact prepared-package sources. The default entry reconstructs frozen roles from the pinned Kaggle raw sources in preparation/<dataset>/recipe.json. These null prepared-package entries are not used unless this optional manifest is explicitly selected.",
+  "datasets": {
+    "CIC-IoV-2024": null,
+    "Car-Hacking": null,
+    "CIC-IDS-2017": null,
+    "CIC-UNSW-NB15": null
+  },
+  "entry_format": {
+    "url": "Replace with a verified public HTTPS URL on port 443 for a flat ZIP containing exactly the three files below.",
+    "archive_sha256": "Replace with the verified 64-character lowercase SHA256 of the exact ZIP bytes.",
+    "files": {
+      "development.npz": "Replace with the verified 64-character lowercase SHA256 of this file.",
+      "preparation.json": "Replace with the verified 64-character lowercase SHA256 of this file.",
+      "selected_train_identities.npz": "Replace with the verified 64-character lowercase SHA256 of this file."
+    },
+    "max_download_bytes": 8589934592,
+    "max_uncompressed_bytes": 17179869184
+  },
+  "constraints": [
+    "Use the exact ordered feature and class maps in src/dataset_access.py.",
+    "development.npz must contain only class_names, feature_names and X/y_train, X/y_cal, X/y_val. TEST and confirmation members are forbidden.",
+    "preparation.json must pin data_sha256 and identity_sha256 matching the packaged development and TRAIN identity NPZ files.",
+    "Confirm source version, preparation recipe, frozen role identities and redistribution rights before publishing a package or URL.",
+    "Raw source CSV downloads alone cannot reproduce this software's frozen development package.",
+    "Existing dataset folders are read and validated without replacement; remove or repair an invalid cache explicitly outside this reader."
+  ]
+}

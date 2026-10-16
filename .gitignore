@@ -136,3 +136,44 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+
+# FedCAID: only source, preparation recipes and row identity metadata are public.
+/outputs/
+/data/
+/data_cache/
+/.idea/
+/.vscode/
+**/private_DO_NOT_UPLOAD/
+**/simulation_ledgers/
+**/privacy_budget_ledgers*/
+*.pt
+*.pth
+*.ckpt
+*.npz
+*.npy
+*.parquet
+*.pcap
+*.pcapng
+*.pkl
+*.pickle
+*.joblib
+/dataset/raw/
+/dataset/.prepared_download_*/
+/dataset/.raw_download_*/
+/dataset/.preparing_*/
+/dataset/CIC-IoV-2024/
+/dataset/Car-Hacking/
+/dataset/CIC-IDS-2017/
+/dataset/CIC-UNSW-NB15/
+/run_main.local.cmd
+.env
+.env.*
+!/.env.example
+
+/dataset/archive/
+/dataset/.kaggle*/
+/dataset/.download*/
+
+/dataset/.prepare_*/
+
+/dataset/.staging/

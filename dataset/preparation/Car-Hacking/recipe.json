@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "name": "Car-Hacking",
+  "official_source": "https://ocslab.hksecurity.net/Datasets/car-hacking-dataset",
+  "kaggle": {
+    "handle": "pranavjha24/car-hacking-dataset",
+    "version": 1
+  },
+  "seed": 42,
+  "fraction": "full",
+  "class_names": [
+    "BENIGN",
+    "DoS",
+    "Fuzzy",
+    "Gear spoofing",
+    "RPM spoofing"
+  ],
+  "feature_names": [
+    "ID",
+    "DLC",
+    "DATA_0",
+    "DATA_1",
+    "DATA_2",
+    "DATA_3",
+    "DATA_4",
+    "DATA_5",
+    "DATA_6",
+    "DATA_7"
+  ],
+  "pipeline": null,
+  "encoding": "utf-8-sig",
+  "label_column": null,
+  "source_class_counts": [
+    14237958,
+    587521,
+    491847,
+    597252,
+    654897
+  ],
+  "train_rows": 16554475,
+  "train_class_counts": [
+    14225152,
+    586968,
+    491380,
+    596691,
+    654284
+  ],
+  "heldout_class_counts": {
+    "cal": [
+      4269,
+      185,
+      155,
+      187,
+      204
+    ],
+    "val": [
+      4269,
+      184,
+      156,
+      187,
+      204
+    ]
+  },
+  "source_files": [
+    {
+      "filename": "DoS_dataset.csv",
+      "bytes": 190058708,
+      "sha256": "09bf3136647b1d846d13c374f26208f06ffeba18369093fc57c8076fc56b795e",
+      "csv_data_rows": 3665771,
+      "url": null
+    },
+    {
+      "filename": "Fuzzy_dataset.csv",
+      "bytes": 198520767,
+      "sha256": "a0e78dff6365a1ad3d314973f1ac5879b57f9b80c40eb07b1e3bbe4aeddaecfe",
+      "csv_data_rows": 3838860,
+      "url": null
+    },
+    {
+      "filename": "gear_dataset.csv",
+      "bytes": 230320414,
+      "sha256": "b4eba43605fff337117ff30e13c33f63b56eec3b00927c8bccb31192df3bee23",
+      "csv_data_rows": 4443142,
+      "url": null
+    },
+    {
+      "filename": "RPM_dataset.csv",
+      "bytes": 239581936,
+      "sha256": "6718c6cb0a5fe6bdf0e966a680f1d6d7d79c063d603254d6118c16aaeb74974d",
+      "csv_data_rows": 4621702,
+      "url": null
+    }
+  ],
+  "heldout_identities": {
+    "filename": "heldout_identities.csv",
+    "sha256": "123293ffdf84d46e6ca53285d3634b9972e11bbdf4fb8fde559cbc122669fea7"
+  },
+  "excluded_identities": {
+    "filename": "excluded_identities.csv",
+    "sha256": "aa59660fe804a5693cc08eef977127ae16e6e06412f93e2b8871a593380c28a4"
+  },
+  "scope": "Only source row numbers and labels are published. TEST and confirmation source identities stay excluded from TRAIN; their features are never included in development roles or scored."
+}

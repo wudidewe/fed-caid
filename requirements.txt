@@ -1,0 +1,10 @@
+# Versions validated in the existing local research environment.
+# An installed torch 2.5.1+cu121 satisfies torch==2.5.1; no CUDA change is needed.
+numpy==2.1.3
+pandas==2.2.3
+scikit-learn==1.6.1
+threadpoolctl==3.5.0
+scipy==1.15.3
+torch==2.5.1
+typing_extensions==4.12.2
+kagglehub==1.0.2

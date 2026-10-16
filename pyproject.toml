@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iov-instruction"
+version = "1.0.0"
+description = "Unified private intrusion-detection research software for in-vehicle CAN and external network data"
+license = {file = "LICENSE"}
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{name = "liulu"}]
+dependencies = [
+    "numpy==2.1.3",
+    "pandas==2.2.3",
+    "scikit-learn==1.6.1",
+    "threadpoolctl==3.5.0",
+    "scipy==1.15.3",
+    "torch==2.5.1",
+    "typing_extensions==4.12.2",
+    "kagglehub==1.0.2",
+]
+urls = {Repository = "https://gitee.com/liuluz/fed-caid", Documentation = "https://gitee.com/liuluz/fed-caid/blob/master/README.md"}
+keywords = ["intrusion detection", "Internet of Vehicles", "federated learning", "secure aggregation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+]
+
+[project.optional-dependencies]
+reporting = ["matplotlib==3.10.0", "psutil==5.9.0"]
+
+[project.scripts]
+iov-instruction = "iov_instruction:main"
+iov-report = "experiment_report:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["vendor"]
+py-modules = [
+    "iov_instruction", "_iov_layout", "main", "data_io", "ids_core",
+    "privacy_core", "privacy_run", "secure_aggregation",
+    "secure_run", "aggregation_audit", "validation_core",
+    "experiment_report_data", "experiment_report", "Utils", "dataset_access",
+    "round_observability", "report_timeseries", "dataset_preparation", "kaggle_source",
+]
+
+[tool.setuptools.package-data]
+vendor = ["*.txt", "*.md"]

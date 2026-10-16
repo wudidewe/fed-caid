@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "Please cite this software and identify the commit used for your experiment."
+type: software
+title: "FedCAID: Federated Class Adapter Intrusion Detection"
+version: "1.0.0"
+repository-code: "https://gitee.com/liuluz/fed-caid"
+license: "Apache-2.0"
+authors:
+  - name: "liulu"
+abstract: >-
+  Research software for a shared intrusion-detection procedure across four
+  independent in-vehicle CAN and external-network proxy dataset federations,
+  with local cross-PLE-TabM detectors, class-score adaptation, two-collector
+  secure aggregation, private personalization, and hierarchical decisions.
+keywords:
+  - intrusion detection
+  - Internet of Vehicles
+  - federated learning
+  - secure aggregation
