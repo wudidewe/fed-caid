@@ -1,4 +1,5 @@
 """Filesystem integration only; no data parsing or numerical configuration."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,7 +7,7 @@ from pathlib import Path
 
 SNAPSHOT_SUPPORT_FILES = (
     "_iov_layout.py",
-    "Utils.py",
+    "utils.py",
     "dataset_access.py",
     "dataset_preparation.py",
     "kaggle_source.py",
@@ -33,11 +34,7 @@ SNAPSHOT_SUPPORT_FILES = (
 
 
 def project_root(module_file):
-    """Preserve the checkout root for outputs, ledgers, and history lookup.
-
-    Installed command-line use places runtime files in the calling directory.
-    Flat execution-source archives use their own directory, as before.
-    """
+    """Use the checkout root, archive directory or installed command working directory."""
     directory = Path(module_file).resolve().parent
     if directory.name == "src" and (directory.parent / "main.py").is_file():
         return directory.parent

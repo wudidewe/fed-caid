@@ -1,4 +1,5 @@
 """End-to-end boundaries for the unified MPC mode; fixtures are synthetic."""
+
 import contextlib
 import io
 import json
@@ -24,9 +25,23 @@ class MPCRunnerTests(unittest.TestCase):
         self.root = Path(self.temp.name)
 
     def args(self, output="experiment", **options):
-        values = ["--out", str(self.root / output), "--smoke", "--clients", "3",
-                  "--rounds", "2", "--base-epochs", "1", "--adapter-epochs", "2",
-                  "--batch-size", "128", "--device", "cpu"]
+        values = [
+            "--out",
+            str(self.root / output),
+            "--smoke",
+            "--clients",
+            "3",
+            "--rounds",
+            "2",
+            "--base-epochs",
+            "1",
+            "--adapter-epochs",
+            "2",
+            "--batch-size",
+            "128",
+            "--device",
+            "cpu",
+        ]
         for key, value in options.items():
             values.extend(["--" + key.replace("_", "-"), str(value)])
         return run.parser().parse_args(values)
@@ -42,7 +57,7 @@ class MPCRunnerTests(unittest.TestCase):
 
     def test_fixed_calibration_indices_across_training_seeds(self):
         parts, names, features = run.synthetic_data(0)
-        partitions = run.client_partitions(parts, len(names), 3, .8, 42, 0)
+        partitions = run.client_partitions(parts, len(names), 3, 0.8, 42, 0)
         models = []
         for training_seed in (42, 43):
             args = self.args(training_seed=training_seed, partition_seed=42)
@@ -50,16 +65,31 @@ class MPCRunnerTests(unittest.TestCase):
             # the legacy alias, exactly as execute's normalization specifies.
             args.seed = args.partition_seed
             with contextlib.redirect_stdout(io.StringIO()):
-                node = run.PrivateClient("client_0", parts, partitions[0], names, features,
-                                         args, self.root / str(training_seed))
+                node = run.PrivateClient(
+                    "client_0",
+                    parts,
+                    partitions[0],
+                    names,
+                    features,
+                    args,
+                    self.root / str(training_seed),
+                )
             models.append(node)
         np.testing.assert_array_equal(models[0].fit_cal_rows, models[1].fit_cal_rows)
         np.testing.assert_array_equal(models[0].threshold_cal_rows, models[1].threshold_cal_rows)
         self.assertEqual(models[0].parameter_count, models[1].parameter_count)
-        self.assertEqual(models[0].performance["training_row_visits"],
-                         models[1].performance["training_row_visits"])
-        self.assertTrue(any(not torch.equal(a, b) for a, b in zip(
-            models[0].model.state_dict().values(), models[1].model.state_dict().values())))
+        self.assertEqual(
+            models[0].performance["training_row_visits"],
+            models[1].performance["training_row_visits"],
+        )
+        self.assertTrue(
+            any(
+                not torch.equal(a, b)
+                for a, b in zip(
+                    models[0].model.state_dict().values(), models[1].model.state_dict().values()
+                )
+            )
+        )
 
     def test_four_domains_secure_transcript_and_private_reload(self):
         args = self.args(training_seed=43, partition_seed=42)
@@ -70,8 +100,10 @@ class MPCRunnerTests(unittest.TestCase):
             contracts.append(contract.as_dict())
             return original_submit(node, channel, initial, contract)
 
-        with contextlib.redirect_stdout(io.StringIO()), \
-             patch.object(run.PrivateClient, "submit_secure", new=observe_submission):
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            patch.object(run.PrivateClient, "submit_secure", new=observe_submission),
+        ):
             self.assertEqual(run.execute(args), 0)
         output = Path(args.out)
         self.assertEqual(args.seed, 42)
@@ -79,8 +111,9 @@ class MPCRunnerTests(unittest.TestCase):
         self.assertEqual(len(contracts), 4 * 3 * 2)
         summary = json.loads((output / "public" / "summary.json").read_text())
         self.assertEqual(len(summary), 4)
-        self.assertEqual({row["domain"] for row in summary},
-                         {"in_vehicle_CAN", "external_network_proxy"})
+        self.assertEqual(
+            {row["domain"] for row in summary}, {"in_vehicle_CAN", "external_network_proxy"}
+        )
         self.assertFalse(list(output.rglob("budget.jsonl")))
         self.assertFalse(list(output.rglob("comparison_private.json")))
         for row in summary:
@@ -104,8 +137,9 @@ class MPCRunnerTests(unittest.TestCase):
             self.assertEqual(len(performance["clients"]), 3)
             for client in performance["clients"]:
                 client_directory = private / client["client"]
-                saved = torch.load(client_directory / "detector_private.pt",
-                                   map_location="cpu", weights_only=False)
+                saved = torch.load(
+                    client_directory / "detector_private.pt", map_location="cpu", weights_only=False
+                )
                 self.assertEqual(saved["framework_version"], 3)
                 self.assertEqual(saved["mechanism"], "mpc")
                 self.assertEqual(len(saved["class_score_adapter"]), dimension)
@@ -113,27 +147,45 @@ class MPCRunnerTests(unittest.TestCase):
                     train_rows, cal_rows = len(partition["train"]), len(partition["cal"])
                     validation_rows = partition["val"]
                 self.assertEqual(client["training_row_visits"], train_rows)
-                self.assertEqual(client["optimizer_steps"], int(np.ceil(train_rows / args.batch_size)))
+                self.assertEqual(
+                    client["optimizer_steps"], int(np.ceil(train_rows / args.batch_size))
+                )
                 with np.load(client_directory / "calibration_split_private.npz") as split:
                     self.assertFalse(np.intersect1d(split["fit"], split["threshold"]).size)
-                    np.testing.assert_array_equal(np.sort(np.r_[split["fit"], split["threshold"]]),
-                                                  np.arange(cal_rows))
+                    np.testing.assert_array_equal(
+                        np.sort(np.r_[split["fit"], split["threshold"]]), np.arange(cal_rows)
+                    )
                 raw_parts, names, _ = run.synthetic_data(run.DATASETS.index(row["dataset"]))
                 raw, labels = raw_parts["val"]
-                decisions = run.predict_private_decisions(client_directory / "detector_private.pt",
-                                                           raw[validation_rows])
-                np.testing.assert_array_equal(decisions["attack_alert"],
-                    decisions["attack_score"] > saved["alarm_threshold"])
-                np.testing.assert_allclose(decisions["probabilities"].sum(1), 1., atol=1e-8)
-                actual = run.risk_metrics(labels[validation_rows], decisions["probabilities"],
-                                          names, saved["alarm_threshold"])
+                decisions = run.predict_private_decisions(
+                    client_directory / "detector_private.pt", raw[validation_rows]
+                )
+                np.testing.assert_array_equal(
+                    decisions["attack_alert"], decisions["attack_score"] > saved["alarm_threshold"]
+                )
+                np.testing.assert_allclose(decisions["probabilities"].sum(1), 1.0, atol=1e-8)
+                actual = run.risk_metrics(
+                    labels[validation_rows],
+                    decisions["probabilities"],
+                    names,
+                    saved["alarm_threshold"],
+                )
                 expected = json.loads((client_directory / "validation_private.json").read_text())
                 self.assertEqual(actual, expected)
         text = "\n".join(path.read_text() for path in (output / "public").rglob("*.json"))
-        for forbidden in ('"share":', '"aggregate_share":', '"state_dict":',
-                          '"X_train":', '"y_train":', '"log_prior":', '"alarm_threshold":',
-                          '"local_class_score_adapter":', '"detector_training_seconds":',
-                          '"adapter_training_seconds":', '"inference_seconds":'):
+        for forbidden in (
+            '"share":',
+            '"aggregate_share":',
+            '"state_dict":',
+            '"X_train":',
+            '"y_train":',
+            '"log_prior":',
+            '"alarm_threshold":',
+            '"local_class_score_adapter":',
+            '"detector_training_seconds":',
+            '"adapter_training_seconds":',
+            '"inference_seconds":',
+        ):
             self.assertNotIn(forbidden, text)
         completion = json.loads((output / "public" / "completion.json").read_text())
         self.assertTrue(completion["complete"])
@@ -148,8 +200,10 @@ class MPCRunnerTests(unittest.TestCase):
             if node.client_id != "client_2":
                 return original_submit(node, channel, initial, contract)
 
-        with contextlib.redirect_stdout(io.StringIO()), \
-             patch.object(run.PrivateClient, "submit_secure", new=skip_one_client):
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            patch.object(run.PrivateClient, "submit_secure", new=skip_one_client),
+        ):
             with self.assertRaisesRegex(SecureAggregationError, "incomplete_roster"):
                 run.execute(args)
         public = Path(args.out) / "public"
@@ -171,19 +225,30 @@ class MPCAuditTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.clients = ("client_0", "client_1", "client_2")
-        self.audit = AggregationAudit(self.root / "audit.jsonl", "CAN", self.clients, 2, .1, 1000000)
-        self.contract = SecureContract("experiment", 1, pc.digest([0., 0.]), self.clients, 2, .1, 1000000)
+        self.audit = AggregationAudit(
+            self.root / "audit.jsonl", "CAN", self.clients, 2, 0.1, 1000000
+        )
+        self.contract = SecureContract(
+            "experiment", 1, pc.digest([0.0, 0.0]), self.clients, 2, 0.1, 1000000
+        )
 
     def receipt(self, contract, model):
-        return {"contract_hash": contract.contract_hash, "parent_model": contract.parent_model,
-                "model_hash": pc.digest(model.tolist())}
+        return {
+            "contract_hash": contract.contract_hash,
+            "parent_model": contract.parent_model,
+            "model_hash": pc.digest(model.tolist()),
+        }
 
     def test_policy_and_order_mismatch_rejected_before_appending(self):
         original = self.audit.path.read_bytes()
-        for changed in (replace(self.contract, clients=("client_0", "client_1", "other")),
-                        replace(self.contract, dimension=3), replace(self.contract, clip=.2),
-                        replace(self.contract, scale=1000), replace(self.contract, round_index=2),
-                        replace(self.contract, parent_model="a" * 64)):
+        for changed in (
+            replace(self.contract, clients=("client_0", "client_1", "other")),
+            replace(self.contract, dimension=3),
+            replace(self.contract, clip=0.2),
+            replace(self.contract, scale=1000),
+            replace(self.contract, round_index=2),
+            replace(self.contract, parent_model="a" * 64),
+        ):
             with self.subTest(contract=changed):
                 with self.assertRaises(ValueError):
                     self.audit.reserve(changed)
@@ -196,7 +261,7 @@ class MPCAuditTests(unittest.TestCase):
             self.assertEqual(self.audit.path.read_bytes(), reserved)
 
     def test_receipt_commit_is_bound_to_model_contract_and_parent(self):
-        model = np.array([.01, -.02])
+        model = np.array([0.01, -0.02])
         receipt = self.receipt(self.contract, model)
         with self.assertRaises(ValueError):
             self.audit.commit(self.contract, model, receipt)

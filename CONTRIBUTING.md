@@ -7,3 +7,7 @@ Preserve the complete ordered feature and label maps, the original source row id
 Keep dataset files, Kaggle credentials, checkpoints, private predictions, generated outputs and local machine paths out of Git. Publish only code, tests, instructions, third party notices and the declared row identity metadata.
 
 The public experiment uses the repository's Apache-2.0 license. Retain third party license and attribution files.
+
+Use snake_case for variables, functions and modules, PascalCase for classes, and UPPER_SNAKE_CASE for constants. Keep method docstrings to one short sentence unless a second sentence is needed to explain a constraint. Preserve framework hooks, checkpoint keys and third party APIs.
+
+Install the optional formatter with `python -m pip install ".[dev]"` and run `python -m black . --check`. The project uses a 100-character line length and leaves vendored code unchanged.

@@ -1,4 +1,5 @@
 """Import the canonical src module under its original, checkpoint-safe name."""
+
 from __future__ import annotations
 
 import importlib.util

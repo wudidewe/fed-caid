@@ -1,6 +1,8 @@
 # Source layout
 
-`main.py` is the unified command, dataset selection and fixed per-dataset parameter configuration. `Utils.py` contains shared numerical preprocessing, CrossPLE TabM construction, losses, client partitions, calibration and metrics.
+`main.py` is the unified command, dataset selection and fixed per-dataset parameter configuration. `utils.py` contains shared numerical preprocessing, CrossPLE TabM construction, losses, client partitions, calibration and metrics.
+
+Use `import utils` in new code. Loading this module also registers the historical `Utils` name for checkpoint lookup; it does not provide a separate uppercase module for direct imports. Current v3 checkpoints store state dictionaries and retain their original fields.
 
 | Module | Role |
 | --- | --- |

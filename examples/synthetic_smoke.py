@@ -1,4 +1,5 @@
 """Small synthetic workflow, independent of the local datasets."""
+
 from pathlib import Path
 import sys
 
@@ -10,7 +11,16 @@ from iov_instruction import main
 
 if __name__ == "__main__":
     arguments = [
-        "--smoke", "--scope", "can", "--rounds", "1",
-        "--base-epochs", "1", "--adapter-epochs", "2", "--device", "cpu",
+        "--smoke",
+        "--scope",
+        "can",
+        "--rounds",
+        "1",
+        "--base-epochs",
+        "1",
+        "--adapter-epochs",
+        "2",
+        "--device",
+        "cpu",
     ]
     raise SystemExit(main(arguments + sys.argv[1:]))

@@ -15,4 +15,6 @@ Validated on 16 October 2026 in the recorded Windows/Python 3.11.13/PyTorch 2.5.
 | CIC-IDS-2017 | 99.376 |
 | CIC-UNSW-NB15 | 95.757 |
 
+The naming and formatting revision also passed all 148 tests. After the declared module, functional import alias and constant renames, every application module retained the same executable syntax tree, excluding docstrings. The vendored Python files remained byte-identical. Synthetic training across all four datasets reproduced all 12 checkpoint files byte for byte and all recorded validation metrics. Reloading the 12 original real-data checkpoints reproduced all probabilities, thresholds, classes and alarms exactly across 16,000 VAL records.
+
 These are single seed development VAL results, not independent TEST or deployment evidence. Costs vary with hardware and runtime conditions. Raw files, prepared arrays, checkpoints, prediction caches and generated experiment reports are excluded from the repository. Public preparation metadata contains feature recipes and source row identities only.

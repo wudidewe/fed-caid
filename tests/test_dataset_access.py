@@ -1,4 +1,5 @@
 """Prepared-data identities and dormant downloader; tests never use the network."""
+
 import copy
 import hashlib
 import json
@@ -34,9 +35,15 @@ def fixture(directory, name="CIC-IoV-2024", *, extra=None):
     path = directory / "development.npz"
     np.savez_compressed(path, **arrays)
     np.savez_compressed(directory / "selected_train_identities.npz", rows=np.arange(classes))
-    (directory / "preparation.json").write_text(json.dumps({
-        "data_sha256": sha(path), "identity_sha256": sha(directory / "selected_train_identities.npz")
-    }), encoding="utf-8")
+    (directory / "preparation.json").write_text(
+        json.dumps(
+            {
+                "data_sha256": sha(path),
+                "identity_sha256": sha(directory / "selected_train_identities.npz"),
+            }
+        ),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -56,13 +63,19 @@ class DatasetAccessTests(unittest.TestCase):
                     output.writestr(members[filename], (source / filename).read_bytes())
                 else:
                     output.write(source / filename, filename)
-        entry = {"url": "https://example.org/prepared.zip", "archive_sha256": sha(archive),
-                 "files": {filename: sha(source / filename) for filename in access._PACKAGE_FILES}}
+        entry = {
+            "url": "https://example.org/prepared.zip",
+            "archive_sha256": sha(archive),
+            "files": {filename: sha(source / filename) for filename in access._PACKAGE_FILES},
+        }
         return archive, {"schema_version": 1, "datasets": {dataset: entry}}
 
     def mock_download(self, archive):
-        return patch.object(access, "_download_archive", side_effect=lambda url, destination, limit:
-                            shutil.copyfile(archive, destination))
+        return patch.object(
+            access,
+            "_download_archive",
+            side_effect=lambda url, destination, limit: shutil.copyfile(archive, destination),
+        )
 
     def test_all_four_complete_signatures_identify_and_load_without_mutation(self):
         for name in access.DATASETS:
@@ -89,9 +102,11 @@ class DatasetAccessTests(unittest.TestCase):
 
     def test_unknown_or_reordered_metadata_is_rejected(self):
         profile = access.DATASET_PROFILES["Car-Hacking"]
-        for replacement in ({"feature_names": profile["feature_names"][::-1]},
-                            {"class_names": profile["class_names"][::-1]},
-                            {"feature_names": ["unknown"] * 10}):
+        for replacement in (
+            {"feature_names": profile["feature_names"][::-1]},
+            {"class_names": profile["class_names"][::-1]},
+            {"feature_names": ["unknown"] * 10},
+        ):
             with self.subTest(replacement=replacement):
                 path = fixture(self.root / "bad", "Car-Hacking", extra=replacement)
                 with self.assertRaisesRegex(ValueError, "exact ordered"):
@@ -130,14 +145,18 @@ class DatasetAccessTests(unittest.TestCase):
     def test_repository_existing_cache_never_downloads_or_changes(self):
         path = fixture(self.root / "repo" / "Car-Hacking", "Car-Hacking")
         before = {p.name: sha(p) for p in path.parent.iterdir()}
-        with patch.object(access, "_download_archive", side_effect=AssertionError("must not download")):
+        with patch.object(
+            access, "_download_archive", side_effect=AssertionError("must not download")
+        ):
             result = access.read_repository_dataset("Car-Hacking", self.root / "repo")
         self.assertEqual(result[1], access.DATASET_PROFILES["Car-Hacking"]["class_names"])
         self.assertEqual(before, {p.name: sha(p) for p in path.parent.iterdir()})
 
     def test_unconfigured_download_stops_without_creating_directories(self):
         target = self.root / "missing_repository"
-        with patch.object(access, "_download_archive", side_effect=AssertionError("must not download")):
+        with patch.object(
+            access, "_download_archive", side_effect=AssertionError("must not download")
+        ):
             with self.assertRaisesRegex(ValueError, "No verified"):
                 access.read_repository_dataset("Car-Hacking", target)
             empty = {"schema_version": 1, "datasets": {"Car-Hacking": None}}
@@ -152,7 +171,9 @@ class DatasetAccessTests(unittest.TestCase):
             result = access.read_repository_dataset("CIC-IDS-2017", repository, manifest)
         self.assertEqual(download.call_count, 1)
         self.assertEqual(result[1], access.DATASET_PROFILES["CIC-IDS-2017"]["class_names"])
-        self.assertEqual(set(p.name for p in (repository / "CIC-IDS-2017").iterdir()), access._PACKAGE_FILES)
+        self.assertEqual(
+            set(p.name for p in (repository / "CIC-IDS-2017").iterdir()), access._PACKAGE_FILES
+        )
         self.assertEqual(set(p.name for p in repository.iterdir()), {"CIC-IDS-2017"})
 
     def test_archive_and_member_hash_mismatch_leave_no_cache(self):
@@ -166,7 +187,10 @@ class DatasetAccessTests(unittest.TestCase):
                 else:
                     entry["files"]["development.npz"] = "0" * 64
                 repository = self.root / kind
-                with self.mock_download(archive), self.assertRaisesRegex(ValueError, "hash differs|SHA256 differs"):
+                with (
+                    self.mock_download(archive),
+                    self.assertRaisesRegex(ValueError, "hash differs|SHA256 differs"),
+                ):
                     access.read_repository_dataset("CIC-IoV-2024", repository, bad)
                 self.assertEqual(list(repository.iterdir()), [])
 
@@ -208,8 +232,12 @@ class DatasetAccessTests(unittest.TestCase):
 
     def test_package_limit_and_invalid_manifests_fail_before_installation(self):
         archive, manifest = self.package()
-        for replacement in ({"max_uncompressed_bytes": 1}, {"max_download_bytes": False},
-                            {"archive_sha256": "missing"}, {"files": {}}):
+        for replacement in (
+            {"max_uncompressed_bytes": 1},
+            {"max_download_bytes": False},
+            {"archive_sha256": "missing"},
+            {"files": {}},
+        ):
             with self.subTest(replacement=replacement):
                 bad = copy.deepcopy(manifest)
                 bad["datasets"]["CIC-IoV-2024"].update(replacement)
@@ -218,14 +246,25 @@ class DatasetAccessTests(unittest.TestCase):
                 self.assertFalse((self.root / "limited" / "CIC-IoV-2024").exists())
 
     def test_https_public_host_and_redirect_guards(self):
-        for url in ("http://example.org/package.zip", "file:///dataset.zip", "https://localhost/x",
-                    "https://127.0.0.1/x", "https://10.0.0.1/x", "https://[::1]/x",
-                    "https://user:secret@example.org/x", "https://example.org:8443/x",
-                    "https://example.org/x#fragment", "https://service.local/x"):
+        for url in (
+            "http://example.org/package.zip",
+            "file:///dataset.zip",
+            "https://localhost/x",
+            "https://127.0.0.1/x",
+            "https://10.0.0.1/x",
+            "https://[::1]/x",
+            "https://user:secret@example.org/x",
+            "https://example.org:8443/x",
+            "https://example.org/x#fragment",
+            "https://service.local/x",
+        ):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 access._validate_download_url(url)
         private_dns = [(2, 1, 6, "", ("192.168.1.1", 443))]
-        with patch.object(access.socket, "getaddrinfo", return_value=private_dns), self.assertRaises(ValueError):
+        with (
+            patch.object(access.socket, "getaddrinfo", return_value=private_dns),
+            self.assertRaises(ValueError),
+        ):
             access._validate_download_url("https://example.org/x", resolve=True)
         handler = access._HttpsRedirect()
         for destination in ("file:///secret", "http://example.org/x", "https://localhost/x"):
@@ -237,7 +276,9 @@ class DatasetAccessTests(unittest.TestCase):
         target = repository / "CIC-IoV-2024"
         target.mkdir(parents=True)
         (target / "user_file.txt").write_text("keep")
-        with patch.object(access, "_download_archive", side_effect=AssertionError("must not download")):
+        with patch.object(
+            access, "_download_archive", side_effect=AssertionError("must not download")
+        ):
             with self.assertRaises(FileNotFoundError):
                 access.read_repository_dataset("CIC-IoV-2024", repository)
         self.assertEqual((target / "user_file.txt").read_text(), "keep")

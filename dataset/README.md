@@ -5,7 +5,7 @@ Run `python main.py` from the source checkout. The default data root is this `da
 1. Reuse `dataset/<dataset>/development.npz` when its metadata, feature/class signature and integrity records are valid.
 2. Otherwise obtain the pinned Kaggle source through `kagglehub.dataset_download`.
 3. Verify every original CSV against the recipe's byte count and SHA256.
-4. Reconstruct CAL and VAL in the original source row order. Construct full TRAIN from all source rows outside the recorded exclusions, then apply the original seed 42 permutation.
+4. Reconstruct CAL and VAL in the original recorded role order. Construct full TRAIN from all source rows outside the recorded exclusions, then apply the original seed 42 permutation.
 5. Install the three prepared files only after validation and begin training.
 
 No new random split or feature selection is performed. The published metadata consists of feature recipes and source row numbers, not traffic features or predictions. Numerical preprocessing remains fitted from TRAIN only.

@@ -1,13 +1,18 @@
 """Protocol properties, rather than model-specific implementation snapshots."""
+
 from dataclasses import replace
 import unittest
 from unittest.mock import patch
 
 import numpy as np
 
-from secure_aggregation import (PRIME, SecureAggregationError,
-                                SecureAggregationSession, _clip_quantize,
-                                _split_quantized)
+from secure_aggregation import (
+    PRIME,
+    SecureAggregationError,
+    SecureAggregationSession,
+    _clip_quantize,
+    _split_quantized,
+)
 
 
 CLIENTS = ("vehicle-a", "vehicle-b", "vehicle-c")
@@ -33,8 +38,11 @@ class SecureAggregationTests(unittest.TestCase):
             processes = tuple(p.pid for p in channel._processes)
             for round_index in range(3):
                 contract = channel.start_round("experiment", round_index, PARENT)
-                updates = [np.array([.02, -.03, .01]),
-                           np.array([.01, .04, -.005]), np.array([-.01, .02, .03])]
+                updates = [
+                    np.array([0.02, -0.03, 0.01]),
+                    np.array([0.01, 0.04, -0.005]),
+                    np.array([-0.01, 0.02, 0.03]),
+                ]
                 for client, update in zip(CLIENTS, updates):
                     ack = channel.submit(client, update, contract)
                     self.assertEqual(set(ack), {"accepted", "contract_hash"})
@@ -50,18 +58,22 @@ class SecureAggregationTests(unittest.TestCase):
                 self.assertEqual(receipt["communication_counters"]["sent_messages"], 10)
                 self.assertEqual(receipt["communication_counters"]["received_messages"], 10)
                 self.assertGreater(receipt["serialized_application_bytes"], 192)
-                self.assertGreaterEqual(receipt["local_ipc_frame_bytes"], receipt["serialized_application_bytes"])
+                self.assertGreaterEqual(
+                    receipt["local_ipc_frame_bytes"], receipt["serialized_application_bytes"]
+                )
         self.assert_closed(channel)
 
     def test_large_finite_update_is_clipped_without_overflow(self):
-        updates = [np.array([1e300, -1e300, 0.]),
-                   np.array([.100000123, 0., 0.]),
-                   np.array([.01234567, -.02345678, .00345678])]
+        updates = [
+            np.array([1e300, -1e300, 0.0]),
+            np.array([0.100000123, 0.0, 0.0]),
+            np.array([0.01234567, -0.02345678, 0.00345678]),
+        ]
         expected = []
         for update in updates:
             maximum = np.max(np.abs(update))
             direction = update / maximum
-            expected.append(direction * min(maximum, .1 / np.linalg.norm(direction)))
+            expected.append(direction * min(maximum, 0.1 / np.linalg.norm(direction)))
         with self.session() as channel:
             channel.start_round("clipping", 0, PARENT)
             for client, update in zip(CLIENTS, updates):
@@ -69,7 +81,7 @@ class SecureAggregationTests(unittest.TestCase):
             actual, receipt = channel.aggregate()
         error = np.max(np.abs(actual - np.mean(expected, axis=0)))
         self.assertLessEqual(error, receipt["mean_coordinate_quantization_bound"] + 1e-15)
-        self.assertLessEqual(np.linalg.norm(actual), .1 + np.sqrt(3) * .5e-6)
+        self.assertLessEqual(np.linalg.norm(actual), 0.1 + np.sqrt(3) * 0.5e-6)
 
     def test_single_share_is_compatible_with_different_updates(self):
         # For a uniform first share, EVERY field input maps to one unique other
@@ -78,8 +90,7 @@ class SecureAggregationTests(unittest.TestCase):
         other_first, other_second = _split_quantized([5, -9, -42], _FixedRandom())
         self.assertEqual(first, other_first)
         self.assertNotEqual(second, other_second)
-        self.assertEqual([(a + b) % PRIME for a, b in zip(first, second)],
-                         [(-11) % PRIME, 0, 37])
+        self.assertEqual([(a + b) % PRIME for a, b in zip(first, second)], [(-11) % PRIME, 0, 37])
         self.assertTrue(all(0 <= value < PRIME for value in first + second))
 
     def test_fresh_system_random_shares(self):
@@ -124,10 +135,12 @@ class SecureAggregationTests(unittest.TestCase):
             self.assert_closed(channel)
 
     def test_unregistered_client_and_bad_vectors_abort(self):
-        cases = [("unknown", [0, 0, 0], "unregistered_client"),
-                 (CLIENTS[0], [0, 0], "invalid_update_vector"),
-                 (CLIENTS[0], [0, np.nan, 0], "invalid_update_vector"),
-                 (CLIENTS[0], [0, np.inf, 0], "invalid_update_vector")]
+        cases = [
+            ("unknown", [0, 0, 0], "unregistered_client"),
+            (CLIENTS[0], [0, 0], "invalid_update_vector"),
+            (CLIENTS[0], [0, np.nan, 0], "invalid_update_vector"),
+            (CLIENTS[0], [0, np.inf, 0], "invalid_update_vector"),
+        ]
         for client, update, expected in cases:
             with self.subTest(expected=expected, update=update):
                 with self.session() as channel:
@@ -139,8 +152,11 @@ class SecureAggregationTests(unittest.TestCase):
     def test_worker_rejects_out_of_range_share(self):
         with self.session() as channel:
             contract = channel.start_round("field-range", 0, PARENT)
-            payload = {"contract_hash": contract.contract_hash,
-                       "client_id": CLIENTS[0], "share": [PRIME, 0, 0]}
+            payload = {
+                "contract_hash": contract.contract_hash,
+                "client_id": CLIENTS[0],
+                "share": [PRIME, 0, 0],
+            }
             with self.assertRaisesRegex(SecureAggregationError, "invalid_field_share"):
                 channel._rpc("share", [payload, payload])
             self.assert_closed(channel)
@@ -148,8 +164,7 @@ class SecureAggregationTests(unittest.TestCase):
     def test_worker_rejects_changed_round_metadata(self):
         with self.session() as channel:
             channel.start_round("metadata", 0, PARENT)
-            payload = {"contract_hash": "f" * 64,
-                       "client_id": CLIENTS[0], "share": [1, 2, 3]}
+            payload = {"contract_hash": "f" * 64, "client_id": CLIENTS[0], "share": [1, 2, 3]}
             with self.assertRaisesRegex(SecureAggregationError, "stale_or_changed_contract"):
                 channel._rpc("share", [payload, payload])
             self.assert_closed(channel)
@@ -175,18 +190,23 @@ class SecureAggregationTests(unittest.TestCase):
         for roster in [("a", "b"), ("a", "a", "b"), "abc"]:
             with self.assertRaises(ValueError):
                 SecureAggregationSession(roster, 2)
-        for extra in [{"dimension": 0}, {"scale": 0}, {"scale": True},
-                      {"clip": float("inf")}, {"clip": 1e15, "scale": 1_000_000},
-                      {"timeout": 0}]:
+        for extra in [
+            {"dimension": 0},
+            {"scale": 0},
+            {"scale": True},
+            {"clip": float("inf")},
+            {"clip": 1e15, "scale": 1_000_000},
+            {"timeout": 0},
+        ]:
             with self.subTest(extra=extra), self.assertRaises(ValueError):
                 values = {"dimension": 2, **extra}
                 SecureAggregationSession(CLIENTS, **values)
 
     def test_quantizer_coordinate_error(self):
-        values = np.array([.013579123, -.024681234, .032165489])
-        integers = _clip_quantize(values, 3, .1, 1_000_000)
+        values = np.array([0.013579123, -0.024681234, 0.032165489])
+        integers = _clip_quantize(values, 3, 0.1, 1_000_000)
         actual = np.asarray(integers) / 1_000_000
-        self.assertLessEqual(np.max(np.abs(actual - values)), .5e-6 + 1e-16)
+        self.assertLessEqual(np.max(np.abs(actual - values)), 0.5e-6 + 1e-16)
 
 
 if __name__ == "__main__":
