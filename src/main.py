@@ -194,6 +194,7 @@ def main(argv=None):
             print(f'Report: {report_dir.resolve()/"report.html"}')
         except (ImportError, ValueError, OSError) as error:
             print(f"Experiment completed; report unavailable: {error}", flush=True)
+            return 2
     return code
 
 

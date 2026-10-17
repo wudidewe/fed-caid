@@ -55,6 +55,12 @@ python main.py --dataset CIC-IDS-2017
 
 The complete default experiment uses seed 42, three clients per dataset, five detector epochs, three aggregation rounds and ten adapter epochs per round. All eligible TRAIN rows are used. Settings are in `src/main.py`; shared numerical methods are in `src/utils.py`. Changing these settings defines a different experiment. Use complete option names such as `--base-epochs`; abbreviated options are rejected.
 
+If automatic report generation fails after training, the command returns exit code 2 and preserves the experiment outputs. Regenerate the report from the completed run without retraining, using a new report directory:
+
+```text
+python src/experiment_report.py --run outputs/your_run --out outputs/your_run_report_retry/private_DO_NOT_UPLOAD
+```
+
 `BENIGN` is class zero. The two 68-feature datasets have different ordered feature and label maps. NB15 uses the augmented CICFlowMeter representation, not the original UNSW-NB15 table format.
 
 ## Results and reproducibility
@@ -67,14 +73,16 @@ A completed run creates a fresh experiment directory and a companion report dire
 - Base prediction cost.
 - Communication volume.
 
-The local full run with the pinned data and dependencies produced the following pooled VAL results. F1 means support weighted F1.
+Reference validation run: 2026-10-17 (`local_csv_full_20261017`), using seed 42 and the complete default configuration above. All values are percentages rounded to three decimal places, matching the generated HTML report. F1 is support weighted F1, calculated from the concatenated client VAL predictions.
 
-| Dataset | F1 (%) |
-| --- | ---: |
-| CIC-IoV-2024 | 100.000000 |
-| Car-Hacking | 99.979969 |
-| CIC-IDS-2017 | 99.375997 |
-| CIC-UNSW-NB15 | 95.756787 |
+| Dataset | Accuracy (%) | F1 (%) | False alarm rate (%) | False negative rate (%) |
+| --- | ---: | ---: | ---: | ---: |
+| CIC-IoV-2024 | 100.000 | 100.000 | 0.000 | 0.000 |
+| Car-Hacking | 99.980 | 99.980 | 0.000 | 0.137 |
+| CIC-IDS-2017 | 99.460 | 99.376 | 0.214 | 0.477 |
+| CIC-UNSW-NB15 | 95.920 | 95.757 | 0.901 | 3.548 |
+
+The report CSV keeps the unrounded values. For example, F1 values `99.979969`, `99.375997` and `95.756787` appear as `99.980`, `99.376` and `95.757` in this table and the HTML report. This formatting does not change the measured results. Use each new run's `metrics_summary.csv` and report when updating this dated reference.
 
 The data hashes, bundled role metadata, default parameters and random seeds preserve the input and experiment definition. Reproducing the recorded numerical results also requires a matching software environment and device. A fixed seed does not guarantee bitwise identical training on every operating system, GPU or library build. Training time, prediction time and resource measurements vary with hardware and system load. Record the Git commit, package versions and device with reported results.
 
