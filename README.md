@@ -24,7 +24,7 @@ An installed `torch==2.5.1+cu121` satisfies the declared PyTorch version. For ot
 
 ## Dataset setup
 
-Download the original datasets manually using the official links and file list in [dataset/README.md](dataset/README.md). Raw datasets are not included in this repository. Place their CSV files under the following project directories:
+Download the complete four-dataset bundle from the [dataset release](https://gitee.com/liuluz/fed-caid/releases/tag/datasets-v1.0.0), or obtain the datasets from their official providers. Dataset archives are separate Release attachments and are not downloaded by `git clone`. Follow the part list, integrity checks and extraction commands in [dataset/README.md](dataset/README.md). Place their CSV files under the following project directories:
 
 | Dataset | Raw source under `./dataset/` | Features | Classes |
 | --- | --- | ---: | ---: |

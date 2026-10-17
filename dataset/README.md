@@ -1,6 +1,32 @@
 # Dataset setup
 
-Download the datasets manually from their official providers. Raw datasets and generated caches are excluded from Git. Only this setup document is included under `dataset/`.
+The complete four-dataset bundle is provided as separate [Release attachments](https://gitee.com/liuluz/fed-caid/releases/tag/datasets-v1.0.0). These files are not included in `git clone`. Raw datasets and generated caches remain excluded from Git; only this setup document is tracked under `dataset/`. You can also obtain the datasets manually from their official providers below.
+
+## Release bundle
+
+Download all files listed for each dataset into a `downloads/` directory at the repository root, together with `README_DATASETS.md`, `SHA256SUMS.txt` and `dataset_manifest.json`. Do not rename the parts. All parts of an archive must be in the same directory. The automatically generated `Source code` archives contain the software only; download the named dataset attachments for the data.
+
+| Dataset | Download files | Extract to |
+| --- | --- | --- |
+| Car-Hacking | `car-hacking.zip.001` and `.002` | `dataset/Car-Hacking Dataset/` |
+| CIC-IDS-2017 | `cic-ids-2017.zip.001` through `.003` | `dataset/` |
+| CIC-IoV-2024 | `cic-iov-2024.zip` | `dataset/` |
+| CIC-UNSW-NB15 | `cic-unsw-nb15.zip.001` through `.006` | `dataset/CIC-UNSW-NB15/` |
+
+Verify the downloaded files against `SHA256SUMS.txt`. On Windows, use `Get-FileHash -Algorithm SHA256 <file>`; on systems with `sha256sum`, run `sha256sum -c SHA256SUMS.txt` from the download directory. Stop if any hash differs.
+
+Use 7-Zip to open the first part of each split ZIP. With `7z` on PATH, run from the repository root:
+
+```text
+7z x downloads/car-hacking.zip.001 "-o./dataset/Car-Hacking Dataset"
+7z x downloads/cic-ids-2017.zip.001 -o./dataset
+7z x downloads/cic-iov-2024.zip -o./dataset
+7z x downloads/cic-unsw-nb15.zip.001 -o./dataset/CIC-UNSW-NB15
+```
+
+IDS and IoV already include their outer directory. Car-Hacking and NB15 contain CSVs at archive root, so extract them into the specific subdirectories above. The experiment inputs are byte identical to the validated local sources. Accompanying source files are preserved in the data bundle but are not used by the experiment.
+
+## Official sources and expected layout
 
 | Dataset | Official source | Required files |
 | --- | --- | --- |
