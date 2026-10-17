@@ -462,6 +462,11 @@ def execute_secure(args):
                 + aggregation_seconds
                 + sum(n.performance.get("secure_submission_seconds", 0.0) for n in nodes)
             )
+            performance["secure_processing_scope"] = (
+                "recorded startup, audit, client encoding/submission and server aggregation "
+                "subtotal; excludes round-begin IPC, worker shutdown, local adapter fitting "
+                "and result-file serialization"
+            )
             performance["secure_processing_fraction"] = performance[
                 "secure_processing_seconds"
             ] / max(performance["total_experiment_seconds"], 1e-12)
@@ -526,7 +531,9 @@ def execute_secure(args):
                 [{"dataset": r["dataset"], **r["privacy_metrics"]} for r in report],
             )
             print(
-                f'SECURE FEDERATION {name}: {args.rounds} complete-roster rounds; accepted={privacy_metrics["accepted_updates"]}; MPC confidentiality, no DP epsilon',
+                f"SECURE FEDERATION {name}: {args.rounds} complete-roster rounds; "
+                f'nonzero_update_rounds={privacy_metrics["accepted_updates"]}; '
+                "MPC confidentiality, no DP epsilon",
                 flush=True,
             )
             del nodes, node, parts

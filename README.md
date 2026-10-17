@@ -2,87 +2,88 @@
 
 **Federated Class Adapter Intrusion Detection**, version 1.0.0. Author: liulu.
 
-FedCAID runs a shared intrusion detection procedure on four independent datasets. Each client fits a local CrossPLE TabM detector and exchanges compact class adapter updates through two additive share collectors. Detector weights stay local. Each dataset retains its own features, labels, preprocessing, trained detectors and thresholds.
+FedCAID runs independent intrusion detection experiments on four datasets. Each client fits a local CrossPLE TabM detector and exchanges class adapter updates through two additive share collectors. Detector weights stay local. Each dataset has its own features, labels, preprocessing and thresholds.
 
-This repository contains the fresh MPC experiment described in the manuscript. Historical differential privacy accounting, subtype continuation, alternative aggregation experiments, manuscript sources, datasets and trained models are excluded.
+## Installation
 
-## Install
-
-Use Python 3.11 or newer. The numerical package versions match the validated Windows research environment. Install the source checkout:
+Use Python 3.11 and clone this repository:
 
 ```text
 git clone https://gitee.com/liuluz/fed-caid.git
 cd fed-caid
-python -m pip install ".[reporting]"
 ```
 
-The recorded environment uses PyTorch 2.5.1 with CUDA 12.1 and an NVIDIA GeForce RTX 4060 Laptop GPU. The synthetic functional check also works on CPU. Installation does not change an existing compatible CUDA build of PyTorch.
+The validated environment uses Windows, Python 3.11.13, PyTorch 2.5.1 with CUDA 12.1 and an NVIDIA GeForce RTX 4060 Laptop GPU. To match the validated CUDA build, install PyTorch from its [official previous version index](https://pytorch.org/get-started/previous-versions/) before installing the remaining requirements:
 
-## Run
+```text
+python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+python -m pip install -r requirements.txt
+```
+
+An installed `torch==2.5.1+cu121` satisfies the declared PyTorch version. For other supported devices, install the dependencies with `python -m pip install -r requirements.txt`. The default device is CUDA when available, otherwise CPU.
+
+## Dataset setup
+
+Download the original datasets manually using the official links and file list in [dataset/README.md](dataset/README.md). Raw datasets are not included in this repository. Place their CSV files under the following project directories:
+
+| Dataset | Raw source under `./dataset/` | Features | Classes |
+| --- | --- | ---: | ---: |
+| CIC-IoV-2024 | `CICIoV2024/decimal/` | 9 | 6 |
+| Car-Hacking | `Car-Hacking Dataset/` | 10 | 5 |
+| CIC-IDS-2017 | `CIC-IDS-2017 Dataset/` | 68 | 15 |
+| CIC-UNSW-NB15 | `CIC-UNSW-NB15/CICFlowMeter_out.csv` | 68 | 10 |
+
+The reader uses only these four locations. It verifies the byte counts and SHA256 hashes of all 19 expected source files against the bundled recipes. A different dataset release or edited CSV stops execution. The same file with a different archive folder must be moved into the documented location without changing its contents. For NB15, `CICFlowMeter.csv` is an accepted filename only when its contents match the recorded `CICFlowMeter_out.csv` hash. `Data.csv` and `Label.csv` are not experiment inputs.
+
+The 12 recipe and row identity files under `src/fedcaid_resources/preparation/` are required program resources. They fix the original TRAIN, CAL and VAL membership, exclusions and TRAIN order. They do not contain the raw feature matrices. Keep them unchanged.
+
+## Run the experiment
+
+Run from the repository root:
 
 ```text
 python main.py
 ```
 
-The entry checks `dataset/`, obtains missing original CSV files through the official `kagglehub` library, verifies their pinned versions and SHA256 values, and reconstructs the original TRAIN, CAL and VAL roles before training. Existing complete prepared datasets are reused. A partial or different file is rejected rather than overwritten or replaced with a new split.
+The first run reconstructs TRAIN, CAL and VAL from the original CSVs and writes verified caches to `./data_cache/<dataset>/`. Later runs verify the raw sources and reuse a complete cache with matching hashes. The program does not download data or substitute synthetic data for missing files. Caches, trained models and generated reports are excluded from Git.
 
-For CIC-IoV-2024, raw CSV files are placed directly in `dataset/archive/`, for example `dataset/archive/decimal_benign.csv`. There is no required `CICIoV2024/decimal/` directory. Other raw datasets are kept separately under `dataset/raw/<dataset>/`. Prepared arrays use `dataset/<dataset>/development.npz` for all four datasets.
+To run one dataset, choose its explicit identifier:
 
 ```text
 python main.py --dataset CIC-IDS-2017
-python main.py --dataset CIC-IoV-2024 --offline
-python main.py --dataset auto --data PATH_TO_DEVELOPMENT_NPZ
 ```
 
-`--offline` prohibits downloading and can prepare already available raw files. `--data` reads an explicitly supplied prepared archive. `--dataset auto --data` identifies that archive from the complete ordered feature and class maps. Folder names such as `archive` and feature counts alone do not determine dataset identity.
+The complete default experiment uses seed 42, three clients per dataset, five detector epochs, three aggregation rounds and ten adapter epochs per round. All eligible TRAIN rows are used. Settings are in `src/main.py`; shared numerical methods are in `src/utils.py`. Changing these settings defines a different experiment. Use complete option names such as `--base-epochs`; abbreviated options are rejected.
 
-The default experiment uses the previously validated seed 42, three clients, three aggregation rounds, five detector epochs and all eligible TRAIN rows. Per-dataset settings are centralized in `src/main.py`. Explicit command options override these settings. A changed setting defines a new experiment.
+`BENIGN` is class zero. The two 68-feature datasets have different ordered feature and label maps. NB15 uses the augmented CICFlowMeter representation, not the original UNSW-NB15 table format.
 
-| Dataset | Features | Classes | Kaggle source, pinned version 1 |
-| --- | ---: | ---: | --- |
-| CIC-IoV-2024 | 9 | 6 | `pushpakattarde/ciciov2024decimalcsv` |
-| Car-Hacking | 10 | 5 | `pranavjha24/car-hacking-dataset` |
-| CIC-IDS-2017 | 68 | 15 | `chethuhn/network-intrusion-dataset` |
-| CIC-UNSW-NB15 | 68 | 10 | `yasserhessein/cic-unsw-nb15-augmented-dataset` |
+## Results and reproducibility
 
-`BENIGN` is class zero. The two 68-feature datasets have different feature names and labels. The network source is the augmented CIC UNSW representation, not the original UNSW-NB15 feature format. Its remote `CICFlowMeter.csv` is mapped to the verified local filename `CICFlowMeter_out.csv` only after content verification.
+A completed run creates a fresh experiment directory and a companion report directory under `outputs/`. The report contains `report.html`, `metrics_summary.csv` and five separate figures, each as a vector PDF and a 600 dpi PNG:
 
-See [dataset preparation](dataset/README.md) for source layout, fixed role identities, checksum verification and Kaggle access. The first run needs internet access, disk space for several GB of original CSVs, and time for preparation and detector training. Public Kaggle access can depend on provider consent or credentials; use the official Kaggle configuration outside the repository if requested. No token is embedded in this code.
+- CIC-IDS-2017 confusion matrix.
+- CIC-UNSW-NB15 confusion matrix.
+- Detector training time.
+- Base prediction cost.
+- Communication volume.
 
-## Functional checks
+The local full run with the pinned data and dependencies produced the following pooled VAL results. F1 means support weighted F1.
 
-```text
-python main.py --check
-python examples/synthetic_smoke.py
-```
+| Dataset | F1 (%) |
+| --- | ---: |
+| CIC-IoV-2024 | 100.000000 |
+| Car-Hacking | 99.979969 |
+| CIC-IDS-2017 | 99.375997 |
+| CIC-UNSW-NB15 | 95.756787 |
 
-The synthetic example requires no real data and demonstrates software operation. It is not a reported research benchmark. The installed `iov-instruction` command remains an alias of the same entry point.
+The data hashes, bundled role metadata, default parameters and random seeds preserve the input and experiment definition. Reproducing the recorded numerical results also requires a matching software environment and device. A fixed seed does not guarantee bitwise identical training on every operating system, GPU or library build. Training time, prediction time and resource measurements vary with hardware and system load. Record the Git commit, package versions and device with reported results.
 
-## Results
+TRAIN fits preprocessing, numerical bins, class priors and the detector. CAL is divided into adapter fitting and a separate threshold holdout. VAL is development evaluation, not independent TEST evidence. A single seed does not estimate training variability. NB15 `Data.csv` and `Label.csv` overlap the development source and lack two model features; they are not used as an independent TEST set.
 
-Each real invocation creates a new private experiment directory under `outputs/`. Completed runs also produce a local HTML report, a compact metric CSV, and five independent PDF/600 dpi PNG figures: the CIC-IDS-2017 confusion matrix, the CIC-UNSW-NB15 confusion matrix, summed detector training time, amortized base prediction cost, and communication volume. Both confusion matrices retain all classes and have the same physical dimensions. F1 means support weighted F1 and is reported in the table rather than a repeated plot.
+Prediction cost uses the summed CAL and VAL base prediction time divided by their record count. It excludes preprocessing, model loading, calibrated decisions and network latency. Numeric share payloads and serialized round communication are separate quantities. `nonzero_update_rounds` counts rounds that changed the global adapter. `secure_processing_seconds` totals the recorded startup, audit, client submission and aggregation intervals; it excludes round-begin messages, worker shutdown, local adapter fitting and result-file serialization.
 
-```text
-python examples/report_experiment.py --runs ONE_COMPLETED_RUN --out NEW_REPORT_DIRECTORY
-```
+The collectors assume noncollusion, a trusted host/coordinator and honest clipping. This release provides no differential privacy, malicious client protection or remote authenticated transport.
 
-Prediction cost is the summed CAL and VAL base prediction time divided by the corresponding processed records. It excludes preprocessing, model loading, calibrated decisions and network latency. Numeric share payloads and serialized round communication have different scopes and are not additive. See [measurement definitions](docs/EXPERIMENT_PRESENTATION.md).
+## License
 
-## Scope and reuse
-
-TRAIN fits preprocessing and the detector. CAL is divided into adapter fitting and a separate threshold holdout. VAL provides development evaluation, not independent TEST evidence. The single seed does not estimate variability across training runs.
-
-The local collectors assume noncollusion, a trusted host/coordinator and honest clipping. This release provides no differential privacy or malicious client guarantee and does not implement blockchain or remote authenticated transport.
-
-```python
-from iov_instruction import predict_private_decisions
-result = predict_private_decisions(checkpoint, X, device="cpu")
-```
-
-Only load trusted checkpoints. `X` must preserve the saved feature order and width. The interface restores TRAIN preprocessing and returns class predictions, attack alerts, scores and thresholds.
-
-## License and citation
-
-The repository's existing [Apache-2.0 license](LICENSE) is retained. Third party model notices remain in `src/vendor/`. Dataset access and redistribution remain subject to their providers' terms; raw and prepared data are not included in Git.
-
-Use [CITATION.cff](CITATION.cff) and record the exact Git commit and experiment configuration. No accepted publication or software DOI is asserted.
+The existing [Apache-2.0 license](LICENSE) is retained. Third-party model licenses and notices are in `src/vendor/`. Dataset use remains subject to each provider's terms.

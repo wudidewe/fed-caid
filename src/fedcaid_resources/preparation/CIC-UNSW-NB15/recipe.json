@@ -2,10 +2,6 @@
   "schema_version": 1,
   "name": "CIC-UNSW-NB15",
   "official_source": "https://www.unb.ca/cic/datasets/cic-unsw-nb15.html",
-  "kaggle": {
-    "handle": "yasserhessein/cic-unsw-nb15-augmented-dataset",
-    "version": 1
-  },
   "seed": 42,
   "fraction": "full",
   "class_names": [
@@ -302,8 +298,9 @@
       "bytes": 1914305081,
       "sha256": "025a94239f29521e154be3a65d65268404d4c58600b66b94a4235eae87dbd8b5",
       "csv_data_rows": 3540241,
-      "url": null,
-      "kaggle_path": "CICFlowMeter.csv"
+      "aliases": [
+        "CICFlowMeter.csv"
+      ]
     }
   ],
   "heldout_identities": {
@@ -314,5 +311,6 @@
     "filename": "excluded_identities.csv",
     "sha256": "2ec588a6dd6cae663ab542a3b4baac62741bc672951ae7e7cfebf70a78b8ed8d"
   },
-  "scope": "Only source row numbers and labels are published. TEST and confirmation source identities stay excluded from TRAIN; their features are never included in development roles or scored."
+  "scope": "Only source row numbers and labels are published. TEST and confirmation source identities stay excluded from TRAIN; their features are never included in development roles or scored.",
+  "raw_directory": "CIC-UNSW-NB15"
 }

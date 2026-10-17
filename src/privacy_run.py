@@ -317,7 +317,7 @@ def execute(args):
 
 
 def parser():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     p.add_argument(
         "--out", default=None, help="NEW output directory; default creates a timestamped directory"
     )

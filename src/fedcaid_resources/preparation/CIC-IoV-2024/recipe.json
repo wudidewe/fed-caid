@@ -1,12 +1,7 @@
 {
   "schema_version": 1,
   "name": "CIC-IoV-2024",
-  "raw_directory": "archive",
   "official_source": "https://www.unb.ca/cic/datasets/iov-dataset-2024.html",
-  "kaggle": {
-    "handle": "pushpakattarde/ciciov2024decimalcsv",
-    "version": 1
-  },
   "seed": 42,
   "fraction": "full",
   "class_names": [
@@ -71,43 +66,37 @@
       "filename": "decimal_benign.csv",
       "bytes": 57659154,
       "sha256": "b6d77f20dfb0a1a08717f02b3773568a6035332bc430c9a92f18407dc2893755",
-      "csv_data_rows": 1223737,
-      "url": null
+      "csv_data_rows": 1223737
     },
     {
       "filename": "decimal_DoS.csv",
       "bytes": 2827315,
       "sha256": "84b45003b8ab75273e0a1dcb05de6a351a2ded4be1bd1127017a4b4624b4f1c8",
-      "csv_data_rows": 74663,
-      "url": null
+      "csv_data_rows": 74663
     },
     {
       "filename": "decimal_spoofing-GAS.csv",
       "bytes": 424710,
       "sha256": "70631989df540d8699842b025a6a017578d6ef0e04416d5d417948f41d14ed90",
-      "csv_data_rows": 9991,
-      "url": null
+      "csv_data_rows": 9991
     },
     {
       "filename": "decimal_spoofing-RPM.csv",
       "bytes": 2465547,
       "sha256": "a9898d6c74236a22dcb57bbcf2fe0e4937ba31061c9508d85e75f0485cd41019",
-      "csv_data_rows": 54900,
-      "url": null
+      "csv_data_rows": 54900
     },
     {
       "filename": "decimal_spoofing-SPEED.csv",
       "bytes": 1137857,
       "sha256": "40812845fd3abae2471c5a87deb84f3cb7cfc014696f4e90b6f48089fc5327bc",
-      "csv_data_rows": 24951,
-      "url": null
+      "csv_data_rows": 24951
     },
     {
       "filename": "decimal_spoofing-STEERING_WHEEL.csv",
       "bytes": 1158699,
       "sha256": "9f7db973ee9a0ad2c38e48b9db7ba1c8e0b7aeb269c87e10f4894cee39fbd5e7",
-      "csv_data_rows": 19977,
-      "url": null
+      "csv_data_rows": 19977
     }
   ],
   "heldout_identities": {
@@ -118,5 +107,6 @@
     "filename": "excluded_identities.csv",
     "sha256": "49b5ef52f3db0aa816f322f6792f525b356397eff389dc416264dfc6590cd0c0"
   },
-  "scope": "Only source row numbers and labels are published. TEST and confirmation source identities stay excluded from TRAIN; their features are never included in development roles or scored."
+  "scope": "Only source row numbers and labels are published. TEST and confirmation source identities stay excluded from TRAIN; their features are never included in development roles or scored.",
+  "raw_directory": "CICIoV2024/decimal"
 }

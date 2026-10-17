@@ -1,12 +1,10 @@
-"""Run independent FedCAID experiments with verified Kaggle dataset preparation."""
+"""Run independent FedCAID experiments from manually installed ./dataset files."""
 
 from __future__ import annotations
 
 import argparse
 import math
-import os
 from pathlib import Path
-import subprocess
 import sys
 
 from _iov_layout import project_root
@@ -42,8 +40,6 @@ def non_numerical_option(key):
     return key.startswith("_") or key in {
         "dataset",
         "data",
-        "download_manifest",
-        "offline",
         "no_report",
         "no_observe",
     }
@@ -110,40 +106,29 @@ def numerical_parameters(args, name):
 
 
 def load_local_for_dataset(args, name):
-    """Compatible hook used by the runner; repository reading is the default."""
-    from dataset_access import read_local_dataset, read_repository_dataset
+    """Read a supplied development archive or the local ./dataset source files."""
+    from dataset_access import read_local_dataset, read_dataset_directory
 
     if getattr(args, "data", None):
         return read_local_dataset(Path(args.data), dataset=name)
-    return read_repository_dataset(
-        name,
-        dataset_dir=args.data_root,
-        download_manifest=getattr(args, "download_manifest", None),
-        allow_download=not getattr(args, "offline", False),
-    )
+    return read_dataset_directory(name, dataset_dir=args.data_root)
 
 
 def prepare_selected_datasets(args, names):
-    """Resolve all missing packages before spending time on model fitting."""
+    """Validate all manual sources before preparing data or fitting detectors."""
     if args.smoke or args.data:
         return
-    from dataset_access import check_repository_source, read_repository_dataset
+    from dataset_access import check_dataset_source, read_dataset_directory, has_prepared_files
+    from dataset_preparation import DEFAULT_CACHE
 
     missing = []
     for name in names:
-        if not (Path(args.data_root) / name).exists():
-            check_repository_source(
-                name, args.data_root, args.download_manifest, allow_download=not args.offline
-            )
+        check_dataset_source(name, args.data_root)
+        if not has_prepared_files(DEFAULT_CACHE / name):
             missing.append(name)
     for name in missing:
-        print(f"DATASET DOWNLOAD: {name}", flush=True)
-        loaded = read_repository_dataset(
-            name,
-            dataset_dir=args.data_root,
-            download_manifest=args.download_manifest,
-            allow_download=not args.offline,
-        )
+        print(f"DATASET PREPARE: {name}", flush=True)
+        loaded = read_dataset_directory(name, dataset_dir=args.data_root)
         del loaded
         print(f"DATASET READY: {name}", flush=True)
 
@@ -162,14 +147,6 @@ def parser():
     p.add_argument(
         "--data", type=Path, help="One local prepared development.npz; no download is performed"
     )
-    p.add_argument(
-        "--download-manifest",
-        type=Path,
-        help="Prepared package sources; default is <data-root>/download_sources.json",
-    )
-    p.add_argument(
-        "--offline", action="store_true", help="Read existing datasets without network access"
-    )
     p.add_argument("--detector-lr", type=float, default=0.002)
     p.add_argument("--detector-weight-decay", type=float, default=0.0001)
     p.add_argument(
@@ -187,18 +164,6 @@ def main(argv=None):
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments and arguments[0] == "--privacy":
         arguments = arguments[1:]
-    if arguments == ["--check"]:
-        if not (ROOT / "tests/test_unified.py").is_file():
-            print("Run --check from the source checkout containing tests/.")
-            return 2
-        environment = dict(os.environ)
-        existing = environment.get("PYTHONPATH", "")
-        environment["PYTHONPATH"] = str(ROOT / "src") + (os.pathsep + existing if existing else "")
-        return subprocess.run(
-            [sys.executable, "-B", "-m", "unittest", "discover", "-s", "tests", "-v"],
-            cwd=ROOT,
-            env=environment,
-        ).returncode
     args = parser().parse_args(arguments)
     args._explicit_options = {
         token[2:].split("=", 1)[0].replace("-", "_")

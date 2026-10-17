@@ -347,7 +347,7 @@ def generate_report(paths, output):
         import matplotlib  # noqa: F401
     except ImportError as exc:
         raise ReportDataError(
-            "Matplotlib is required for reporting; install the optional .[reporting] extra"
+            "Matplotlib is required for reporting; install the project runtime dependencies"
         ) from exc
     sources = {str(p): _hash(p) for root in roots for p in root.rglob("*.json") if p.is_file()}
     output.mkdir(parents=True)

@@ -1,10 +1,6 @@
-include README.md LICENSE CITATION.cff CONTRIBUTING.md requirements.txt
-include *.py .gitignore
-include src/README.md dataset/README.md
-include dataset/download_sources.example.json run_main.cmd
-recursive-include examples *.py
-recursive-include tests *.py
-recursive-include src/vendor *.txt *.md
+include README.md LICENSE requirements.txt pyproject.toml
+include main.py _iov_compat.py .gitignore .gitattributes
+recursive-include src *.py *.txt *.md
+recursive-include src/fedcaid_resources/preparation *.json *.csv
+include dataset/README.md
 global-exclude *.py[cod]
-recursive-include docs *.md
-recursive-include dataset/preparation *.json *.csv

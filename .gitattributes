@@ -1,4 +1,4 @@
-* text=auto
+* text=auto eol=lf
 *.py text eol=lf
 *.json text eol=lf
 *.csv text eol=lf
@@ -7,3 +7,6 @@
 *.cff text eol=lf
 *.toml text eol=lf
 *.cmd text eol=crlf
+
+# Preserve the frozen preparation metadata byte for byte.
+src/fedcaid_resources/preparation/** -text

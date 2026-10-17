@@ -14,9 +14,6 @@ import threading
 import time
 
 
-METRICS = ("accuracy", "macro_precision", "macro_recall", "macro_f1", "weighted_f1", "far", "fnr")
-
-
 def observe_rounds(
     nodes,
     global_vectors,

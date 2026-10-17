@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
+import stat
 import tempfile
 
 import numpy as np
@@ -11,20 +13,34 @@ import pandas as pd
 
 from data_io import stream_source
 from ids_core import save_json, sha
+from _iov_layout import project_root
 
 
-def recipe_path(dataset, dataset_root):
-    """Return the public recipe path without touching the filesystem."""
+_PREPARED_FILES = ("development.npz", "selected_train_identities.npz", "preparation.json")
+PREPARATION_ROOT = Path(__file__).resolve().parent / "fedcaid_resources" / "preparation"
+DEFAULT_CACHE = project_root(__file__) / "data_cache"
+RAW_DIRECTORIES = {
+    "Car-Hacking": "Car-Hacking Dataset",
+    "CIC-IDS-2017": "CIC-IDS-2017 Dataset",
+    "CIC-IoV-2024": "CICIoV2024/decimal",
+    "CIC-UNSW-NB15": "CIC-UNSW-NB15",
+}
+
+
+def recipe_path(dataset, dataset_root=None):
+    """Read the bundled role recipe, independently of the raw data directory."""
     from dataset_access import DATASET_PROFILES
 
     if dataset not in DATASET_PROFILES:
         raise ValueError("Unknown dataset identifier: " + str(dataset))
-    return Path(dataset_root) / "preparation" / dataset / "recipe.json"
+    return PREPARATION_ROOT / dataset / "recipe.json"
 
 
 def resolve_raw_directory(recipe, dataset_root):
-    """Resolve a declared relative raw directory, including the IoV archive/."""
-    relative = recipe.get("raw_directory", "raw/" + recipe["name"])
+    """Resolve the documented local raw directory inside ./dataset/."""
+    relative = RAW_DIRECTORIES[recipe["name"]]
+    if recipe.get("raw_directory", relative) != relative:
+        raise ValueError("Raw directory differs from the fixed local dataset layout")
     if (
         not isinstance(relative, str)
         or not relative
@@ -42,11 +58,88 @@ def resolve_raw_directory(recipe, dataset_root):
     return directory
 
 
+def _is_link(path):
+    if path.is_symlink():
+        return True
+    if not path.exists():
+        return False
+    attributes = getattr(path.lstat(), "st_file_attributes", 0)
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0))
+
+
+def checked_source_path(root, path):
+    """Require a path inside root with no symbolic links or junctions."""
+    root, path = Path(root).resolve(), Path(path).absolute()
+    try:
+        relative = path.relative_to(root)
+    except ValueError as error:
+        raise ValueError("Raw source path escapes its dataset or staging directory") from error
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if _is_link(current):
+            raise ValueError("Raw source paths must not contain symbolic links or junctions")
+    if not path.resolve().is_relative_to(root):
+        raise ValueError("Raw source path escapes its dataset or staging directory")
+    return path
+
+
+def _source_aliases(source):
+    aliases = source.get("aliases", [])
+    if not isinstance(aliases, list) or not all(isinstance(name, str) for name in aliases):
+        raise ValueError("Source aliases must be a list of CSV filenames")
+    names = {source["filename"], *aliases}
+    for name in names:
+        if (
+            not name
+            or name != name.strip()
+            or Path(name).name != name
+            or "/" in name
+            or "\\" in name
+            or ":" in name
+            or "\x00" in name
+            or name in {".", ".."}
+            or Path(name).suffix.lower() != ".csv"
+        ):
+            raise ValueError("Source aliases must be plain CSV filenames")
+    result = {name.casefold() for name in names}
+    if result & {"data.csv", "label.csv"}:
+        raise ValueError("Data.csv and Label.csv are not frozen experiment sources")
+    return result
+
+
+def locate_raw_sources(recipe, dataset_root):
+    """Read CSVs only from this dataset's fixed local directory."""
+    root = Path(dataset_root).resolve()
+    default_directory = resolve_raw_directory(recipe, root)
+    sources = recipe["source_files"]
+    aliases = [_source_aliases(source) for source in sources]
+    wanted = set().union(*aliases)
+    candidates = {name: [] for name in wanted}
+    checked_source_path(root, default_directory)
+    if default_directory.is_dir():
+        for path in sorted(default_directory.iterdir()):
+            if path.name.casefold() in wanted:
+                path = checked_source_path(root, path)
+                candidates[path.name.casefold()].append(path)
+    resolved = []
+    for source, names in zip(sources, aliases):
+        matches = sorted(
+            {path for name in names for path in candidates[name]},
+            key=lambda path: (path.relative_to(root).as_posix().casefold(), str(path)),
+        )
+        for path in matches:
+            _verify_raw({**source, "path": path})
+        path = matches[0] if matches else default_directory / source["filename"]
+        resolved.append({**source, "path": checked_source_path(root, path)})
+    return resolved
+
+
 def _recipe(dataset, dataset_root):
     from dataset_access import DATASET_PROFILES
 
     root = Path(dataset_root)
-    path = recipe_path(dataset, root)
+    path = checked_source_path(PREPARATION_ROOT, recipe_path(dataset))
     directory = path.parent
     spec = json.loads(path.read_text(encoding="utf-8"))
     profile = DATASET_PROFILES[dataset]
@@ -70,7 +163,7 @@ def _recipe(dataset, dataset_root):
             or PureWindowsPath(filename).drive
         ):
             raise ValueError("Recipe metadata must use a plain file name")
-        metadata = directory / filename
+        metadata = checked_source_path(PREPARATION_ROOT, directory / filename)
         if not metadata.is_file() or metadata.is_symlink() or sha(metadata) != entry["sha256"]:
             raise ValueError("Frozen source row metadata hash differs: " + filename)
         spec[field + "_path"] = metadata
@@ -85,80 +178,40 @@ def _recipe(dataset, dataset_root):
             or PureWindowsPath(filename).drive
         ):
             raise ValueError("Raw source must use a plain file name")
-        sources.append({**source, "path": resolve_raw_directory(spec, root) / filename})
+        sources.append(dict(source))
     if not sources or len({s["filename"] for s in sources}) != len(sources):
         raise ValueError("Preparation recipe needs distinct ordered source files")
     spec["source_files"] = sources
+    spec["source_files"] = locate_raw_sources(spec, root)
     spec["recipe_sha256"] = sha(path)
     return spec
 
 
-def check_raw_sources(dataset, dataset_root, allow_download=True):
-    """Preflight availability without downloading, creating folders or training."""
-    from dataset_access import _validate_download_url
-
+def check_raw_sources(dataset, dataset_root):
+    """Report missing local CSV files and their official manual download address."""
     spec = _recipe(dataset, dataset_root)
-    missing = []
-    for source in spec["source_files"]:
-        path = source["path"]
-        if path.is_file() and not path.is_symlink():
-            continue
-        if path.exists():
-            raise ValueError("Raw source must be a regular CSV file: " + str(path))
-        if not allow_download or (
-            not source.get("url") and not spec.get("kaggle", {}).get("handle")
-        ):
-            missing.append(source["filename"])
-        elif source.get("url"):
-            _validate_download_url(source["url"])
+    missing = [
+        source["filename"] for source in spec["source_files"] if not source["path"].is_file()
+    ]
     if missing:
-        reason = (
-            "Downloads are disabled"
-            if not allow_download
-            else "No verified direct download URL is configured"
-        )
         raise FileNotFoundError(
-            f"{dataset}: {reason}. Obtain the original CSV files from "
-            f"{spec['official_source']} and place them in "
-            f"{resolve_raw_directory(spec, dataset_root)}: " + ", ".join(missing)
+            f"{dataset}: missing local CSV files: {', '.join(missing)}. "
+            f"Download from {spec['official_source']} and extract under "
+            f"{resolve_raw_directory(spec, dataset_root)}. Automatic downloads are disabled."
         )
+    return spec
 
 
 def _verify_raw(source):
     path = source["path"]
-    if (
-        not path.is_file()
-        or path.is_symlink()
-        or path.stat().st_size != source["bytes"]
-        or sha(path) != source["sha256"]
-    ):
+    if not path.is_file() or path.is_symlink():
         raise ValueError("Raw CSV version differs from the published SHA256: " + source["filename"])
-
-
-def _ensure_raw(spec, dataset_root):
-    from dataset_access import _download_archive
-
-    if any(not source["path"].exists() for source in spec["source_files"]) and spec.get(
-        "kaggle", {}
-    ).get("handle"):
-        from kaggle_source import ensure_kaggle_sources
-
-        ensure_kaggle_sources(spec["name"], dataset_root, spec)
-    for source in spec["source_files"]:
-        path = source["path"]
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.TemporaryDirectory(prefix=".download_", dir=path.parent) as scratch:
-                temporary = Path(scratch) / source["filename"]
-                print("DOWNLOAD " + spec["name"] + ": " + source["filename"], flush=True)
-                _download_archive(source["url"], temporary, source["bytes"])
-                _verify_raw({**source, "path": temporary})
-                if path.exists():
-                    raise FileExistsError(
-                        "Raw file appeared during download; refusing replacement: " + str(path)
-                    )
-                temporary.rename(path)
-        _verify_raw(source)
+    if path.stat().st_size != source["bytes"]:
+        raise ValueError(
+            "Raw CSV byte count differs from the frozen experiment: " + source["filename"]
+        )
+    if sha(path) != source["sha256"]:
+        raise ValueError("Raw CSV SHA256 differs from the frozen experiment: " + source["filename"])
 
 
 def _identity_codes(frame, source_files):
@@ -179,18 +232,60 @@ def _identity_codes(frame, source_files):
     return codes
 
 
-def prepare_dataset(dataset, dataset_root, allow_download=True, *, chunk_size=250000):
+def _install_prepared(staged, output, root):
+    output = checked_source_path(root, output)
+    if not output.exists():
+        staged.rename(output)
+        return
+    if not output.is_dir():
+        raise ValueError("Prepared dataset location must be a regular directory")
+    if any((output / name).exists() or (output / name).is_symlink() for name in _PREPARED_FILES):
+        raise FileExistsError(
+            "Prepared files appeared during preparation; existing files preserved"
+        )
+    installed = []
+    try:
+        # Exclusive links install complete files atomically without replacing raw data.
+        for name in _PREPARED_FILES:
+            source, target = staged / name, output / name
+            os.link(source, target)
+            installed.append((source, target))
+    except BaseException:
+        for source, target in reversed(installed):
+            if target.exists() and not _is_link(target) and os.path.samefile(source, target):
+                target.unlink()
+        raise
+
+
+def prepare_dataset(dataset, dataset_root, *, cache_root=None, chunk_size=250000):
     """Rebuild full TRAIN and ordered CAL/VAL without replacing existing data."""
     root = Path(dataset_root)
     spec = _recipe(dataset, root)
-    output = root / dataset
+    cache_root = Path(cache_root) if cache_root is not None else DEFAULT_CACHE
+    cache_root = cache_root.resolve()
+    output = cache_root / dataset
     if output.exists():
-        from dataset_access import read_local_dataset
+        checked_source_path(cache_root, output)
+        if not output.is_dir():
+            raise ValueError("Prepared dataset location must be a regular directory")
+        if any(
+            (output / name).exists() or (output / name).is_symlink() for name in _PREPARED_FILES
+        ):
+            if not all(
+                (output / name).is_file() and not _is_link(output / name)
+                for name in _PREPARED_FILES
+            ):
+                raise ValueError("Prepared dataset is incomplete; existing files preserved")
+            from dataset_access import read_local_dataset
 
-        read_local_dataset(output / "development.npz", dataset)
-        return output / "development.npz"
-    check_raw_sources(dataset, root, allow_download)
-    _ensure_raw(spec, root)
+            audit = json.loads((output / "preparation.json").read_text(encoding="utf-8"))
+            if audit.get("source_recipe_sha256") != spec["recipe_sha256"]:
+                raise ValueError("Prepared cache belongs to a different frozen role recipe")
+            read_local_dataset(output / "development.npz", dataset)
+            return output / "development.npz"
+    check_raw_sources(dataset, root)
+    for source in spec["source_files"]:
+        _verify_raw(source)
     names, features = spec["class_names"], spec["feature_names"]
     exclusion = pd.read_csv(spec["excluded_identities_path"])
     excluded = _identity_codes(exclusion, spec["source_files"])
@@ -264,7 +359,8 @@ def prepare_dataset(dataset, dataset_root, allow_download=True, *, chunk_size=25
     for source in spec["source_files"]:
         _verify_raw(source)
     permutation = np.random.default_rng(spec["seed"]).permutation(len(y))
-    with tempfile.TemporaryDirectory(prefix=".prepare_", dir=root) as scratch:
+    cache_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".prepare_", dir=cache_root) as scratch:
         staged = Path(scratch) / dataset
         staged.mkdir()
         data = staged / "development.npz"
@@ -313,10 +409,6 @@ def prepare_dataset(dataset, dataset_root, allow_download=True, *, chunk_size=25
         from data_io import load_data
 
         load_data(data)
-        if output.exists():
-            raise FileExistsError(
-                "Prepared cache appeared during preparation; refusing replacement"
-            )
-        staged.rename(output)
+        _install_prepared(staged, output, cache_root)
     print("PREPARED " + dataset + ": frozen roles verified", flush=True)
     return output / "development.npz"
