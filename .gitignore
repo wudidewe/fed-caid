@@ -1,6 +1,7 @@
-# Original datasets are installed manually; only setup instructions are published.
+# Raw datasets and downloaded archives stay outside Git history.
 /dataset/*
 !/dataset/README.md
+/downloads/
 
 # Generated data, private experiment outputs and fitted models.
 /data/
