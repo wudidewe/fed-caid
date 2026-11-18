@@ -4,12 +4,52 @@ The one-click experiment trains the five Hulk development cases again in its
 own run directory. External validation uses the frozen bundles from that same
 run. The `--preflight-only` mode checks the declaration before training.
 
-The manifest template is `external/hulk_manifest.example.json`. It contains no
-real capture, hash, custodian declaration or result and cannot be run as a manifest.
-Copy it to the configured manifest path and replace every placeholder using an
-independently acquired capture. Set `unseen_in_development` to true only when the
+## Hulk manifest example
+
+Create `external/` locally and save the following example as
+`external/hulk_manifest.json`. Replace every placeholder using an independently
+acquired capture before running the optional confirmation. The declaration stays
+outside Git. Set `unseen_in_development` to true only when the
 custodian can attest to that fact. No benchmark split or renamed development file
 becomes an independent capture merely by appearing in this file.
+
+```json
+{
+  "version": 1,
+  "dataset": "CIC-IDS-2017",
+  "target_class": "DoS Hulk",
+  "attestation": {
+    "custodian": "<actual capture custodian>",
+    "unseen_in_development": false
+  },
+  "exact_overlap_policy": "reject",
+  "captures": [
+    {
+      "capture_id": "<unique independent acquisition ID>",
+      "prepared_csv": "<relative or absolute path to prepared capture CSV>",
+      "sha256": "<SHA256 of prepared CSV>",
+      "raw_files": [
+        {
+          "path": "<relative or absolute path to original capture file>",
+          "sha256": "<SHA256 of original capture file>"
+        }
+      ]
+    }
+  ],
+  "criteria": {
+    "min_target_f1_effect_pp": 1.0,
+    "max_far": 0.01,
+    "max_far_increase": 0.001,
+    "max_fnr_increase": 0.005,
+    "min_target_groups": 5,
+    "min_benign_groups": 5,
+    "min_seeds": 5,
+    "min_captures": 1,
+    "min_target_f1_over_base_pp": 1.0,
+    "max_macro_f1_loss_pp": 1.0
+  }
+}
+```
 
 The example criteria are starting values, not proof of practical usefulness.
 Fix the intended criteria before viewing confirmation results. A single capture
@@ -26,14 +66,16 @@ session or vehicle units. See `docs/external_confirmation.md` for the full contr
 
 `revision_external_preflight.preflight_hulk(source, manifest)` returns `ready`,
 `pending` or `failed`. It validates the completed V12 attribution receipts, all
-five compatible V7 frozen bundles, the declaration schema and source hash exclusions,
-and whether the declared prepared/raw files exist. It returns the expected CSV
+five V7 case result hashes and their frozen head, metadata and TabM checkpoint
+hashes, the declaration schema and source hash exclusions, and whether the declared
+prepared and raw files exist. Each seed's route, CAL partition, allocator and donor
+are checked against its own evaluated record. It returns the expected CSV
 columns and labels from the frozen receipt. It does not open capture contents,
 compute predictions, fit thresholds or write a seal. Missing declarations, unfilled
 templates and missing capture files are pending, not successful confirmation.
 
 `run_verified_hulk(output, source, manifest)` proceeds only after a ready preflight.
-The unchanged V7 workflow writes an immutable seal before the confirmation engine
+The V7 workflow writes an immutable seal before the confirmation engine
 reads capture rows or scores them. That engine then checks actual file hashes,
 column order, numeric features, labels, group IDs and development overlap. A ready
 preflight therefore does not establish that all capture-content checks will pass,
@@ -43,4 +85,6 @@ If a manifest was renamed before any seal or result exists, the wrapper can upda
 the same unsealed workflow after verifying unchanged source models. It archives the
 previous workflow first. Once a seal or result exists, changing the manifest path is
 rejected and the original result is retained. Matching completed runs are verified
-and reused; no previous experiment or frozen source is overwritten.
+and reused. If the final receipt is missing and the result tables are complete,
+the program reruns sealed scoring in a temporary directory before accepting them.
+Previous experiments and source models are preserved.

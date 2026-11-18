@@ -1,95 +1,89 @@
 # FedCAID
 
-FedCAID runs reproducible local and federated intrusion detection experiments
-on CAN and network flow data. It provides matched controls for local adaptation,
-donor pooling, and federated aggregation.
+FedCAID compares local and federated intrusion detection on CAN and network flow
+data. It provides matched controls for local adaptation, donor pooling and
+federated aggregation.
 
 [![FedCAID checks](https://github.com/wudidewe/fed-caid/actions/workflows/revision.yml/badge.svg)](https://github.com/wudidewe/fed-caid/actions/workflows/revision.yml)
 
-## Quick start
+## Run the experiment
 
-1. Download the repository as a ZIP from GitHub or run
-   `git clone https://github.com/wudidewe/fed-caid.git`.
-2. Open the directory containing [main.py](main.py) in PyCharm. Select a Python
-   3.11 interpreter and install [requirements.txt](requirements.txt) in it.
-3. Select the **FedCAID** run configuration and click **Run**. You can also open
-   `main.py` and click its Run icon. Leave the program arguments empty.
+1. Open the project root in PyCharm. Select Python 3.11 and install
+   [requirements.txt](requirements.txt) in that interpreter.
+2. Place the original CSVs under `dataset/` using the
+   [dataset preparation guide](dataset/README.md).
+3. Select the **FedCAID** run configuration or run the root [main.py](main.py).
+   Leave the program arguments empty for the full local experiment.
 
-Run the following commands from a terminal in the repository root.
+The launcher lists missing files and returns exit code 2 if the dataset layout
+is incomplete. With all required files present, it verifies the inputs and
+creates a new run in `outputs/fedcaid_review/`. Runtime depends on the machine
+and may take several hours. The software selects CUDA when available.
 
 ```sh
 python -m pip install -r requirements.txt
 python main.py
 ```
 
-The launcher selects the workflow by checking the input files under `dataset/`.
+The primary benchmark uses four datasets and five seeds, 42 through 46, and
+reports grouped development validation (VAL) for local TabM, local adaptation,
+the compact federated adapter and full weight FedAvg. CAN quantization, compact
+adapter transfer and the later day CIC-UNSW-NB15 benchmark use separate
+retrospective test protocols. The Hulk and Exploits subtype comparisons reuse
+fixed binary alarms.
 
-| Inputs | What the launcher does |
-| --- | --- |
-| No required CSV files | Runs a synthetic CPU demonstration and saves a completion receipt under `outputs/fedcaid_demo/`. |
-| Some required CSV files | Lists the missing files so you can complete the dataset layout. |
-| All required CSV files | Starts the full experiment in a new directory under `outputs/fedcaid_review/`. |
+The reference results in the manuscript come from run
+`run_20261117_114937_guhefcl1` on 17 November 2026. The
+[recorded source commit](https://github.com/wudidewe/fed-caid/tree/6f72abd255d4782302fd27ac35f8061f529ec141)
+and the run receipt identify the evaluated source. The reference machine used
+Windows, Python 3.11.13, PyTorch 2.5.1 with CUDA 12.1 and an NVIDIA GeForce RTX
+4060 Laptop GPU.
 
-## Reproduce the experiment
-
-Place the provider files under `dataset/` using the
-[dataset preparation instructions](dataset/README.md). Run the same **FedCAID**
-configuration or use `python main.py --full-review`. The full run takes several
-hours in the recorded CUDA environment. Runtime depends on the machine and
-device. The software selects CUDA when available and supports CPU execution.
-
-The experiment uses the same four source datasets and five seeds, 42 through
-46. The primary benchmark compares local TabM, local adaptation, the compact
-federated adapter, and full weight FedAvg on grouped development validation
-(VAL). CAN quantization, compact adapter transfer, and the later day
-CIC-UNSW-NB15 benchmark use separate retrospective test protocols. The controlled
-Hulk and Exploits studies compare subtype predictions with fixed binary alarms.
-
-The optional independent Hulk and LAN stages require their respective
-declarations under `external/`. The full run marks those stages as pending
-when the declarations are absent and completes the local experiments. See the
-[independent capture guide](docs/external_preflight.md) and
-[transport guide](docs/protocol_validation.md).
-
-The manuscript reference run is `run_20261117_114937_guhefcl1` on 17 November
-2026. Its exact Python source is available at
-[the recorded experiment commit](https://github.com/wudidewe/fed-caid/tree/6f72abd255d4782302fd27ac35f8061f529ec141).
-The reference environment was Python 3.11, Windows, PyTorch 2.5.1 with CUDA 12.1,
-and an NVIDIA GeForce RTX 4060 Laptop GPU.
-
-## Read the results
-
-Start with `outputs/fedcaid_review/run_*/report/SUMMARY.md` after the full run.
-
-| File | Contents |
-| --- | --- |
-| `final_plan.json` | Source hashes and input preflight |
-| `final_complete.json` | Completed and pending stages |
-| `report/SUMMARY.md` | Experiment coverage, operating points, and paired results |
-| `report/tables/` | Detailed results by stage, including per class support and confusion counts |
-
-Use `python main.py --refresh-report <run-directory>` to rebuild a report from
-an existing run. Use `python main.py --help` for the focused experiment and
-resume options.
-
-## Verify the installation
+## Check the installation
 
 ```sh
-python -m unittest discover -s tests -v
+python main.py --demo
 python main.py --smoke
 ```
 
-The explicit smoke option exercises the synthetic CPU workflow in a temporary
-directory. The tests and GitHub Actions workflow provide independent checks of
-the software and installation. The full experiment writes results locally. Git
-ignores raw data, run outputs, caches, trained models, and build files.
+`--demo` runs a small synthetic CPU example and saves a receipt in
+`outputs/fedcaid_demo/`. `--smoke` exercises the synthetic integration suite.
+Both print `synthetic_only=True`. These checks require Python dependencies and
+run without the source CSVs. GitHub Actions runs both checks on Windows and
+Ubuntu and verifies installation from a built wheel.
 
-See [validation and reproduction](docs/review_readiness.md) for the study
-scope and [the software comparison](docs/software_comparison.md) for related
-packages.
+## Results and follow up
+
+Start with `outputs/fedcaid_review/run_*/report/SUMMARY.md`.
+
+| File | Contents |
+| --- | --- |
+| `final_plan.json` | Source and entry point hashes, input checks and planned stages |
+| `final_complete.json` | Stage status, including failures and pending evidence |
+| `report/SUMMARY.md` | Experiment coverage, metrics and paired results |
+| `report/tables/` | Per stage working points, class support and confusion counts |
+
+The independent Hulk capture and LAN measurements require separate
+declarations. Create `external/` locally when configuring these optional stages.
+The local run can finish with status `completed_with_pending`. The command returns exit
+code 2 for failures or pending required stages. See the
+[independent capture guide](docs/external_preflight.md) and the
+[LAN setup guide](docs/protocol_validation.md).
+
+Use `python main.py --refresh-report <run-directory>` to rebuild a report from a
+completed run in a separate directory. The new report records the status of its
+source run. `python main.py --help` lists focused experiments and resume options.
+Resume requires a compatible source snapshot.
+
+The default NB15 low FAR study preserves the candidate random streams used for
+the manuscript. To run a separate comparison with one candidate stream per
+seed and client, use `python main.py --nb15-low-far --independent-client-rng`.
+The run plan records which setting was used.
+
+See [validation and reproduction](docs/review_readiness.md) for the evaluation
+scope and [software comparison](docs/software_comparison.md) for related packages.
 
 ## License
 
-The [Apache License 2.0](LICENSE) covers the FedCAID source. Third party model
-licenses and notices are in [src/vendor](src/vendor). The dataset providers'
-terms apply to their data.
+The [Apache License 2.0](LICENSE) covers the FedCAID source. Third party notices
+are under [src/vendor](src/vendor). Dataset providers' terms apply to their data.

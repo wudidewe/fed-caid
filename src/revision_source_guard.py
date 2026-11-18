@@ -34,11 +34,11 @@ def fit_source_guard(
     if (
         labels.shape != base.shape
         or groups.shape != base.shape
-        or labels.dtype.kind not in "iu"
+        or labels.dtype.kind not in 'iu'
         or (labels < 0).any()
         or (labels >= len(mask)).any()
     ):
-        raise ValueError("Receiver CAL labels and group IDs must align with scores")
+        raise ValueError('Receiver CAL labels and group IDs must align with scores')
     _validate_budget(max_rewrite_rate, min_negative_groups)
     _validate_budget(check_tolerance, min_check_groups)
     unique, inverse = np.unique(groups, return_inverse=True)
@@ -72,80 +72,82 @@ def fit_source_guard(
             min_negative_groups=min_negative_groups,
             group_ids=inverse[route_fit],
         )
-        thresholds = (pooled["threshold"], candidate["threshold"])
+        thresholds = (pooled['threshold'], candidate['threshold'])
         threshold = max(thresholds) if None not in thresholds else None
-        changes = (
-            (margin > threshold) & possible if threshold is not None else np.zeros(base.shape, dtype=bool)
-        )
+        changes = (margin > threshold) & possible if threshold is not None else np.zeros(base.shape, dtype=bool)
         correct = route_check & (labels == original) & ~mask[labels]
         negatives, rewritten = _counts(inverse, route_check & negative, changes)
         good, spoiled = _counts(inverse, correct, changes)
         if threshold is None:
-            status = "insufficient_fit_support_or_no_proposal"
+            status = 'insufficient_fit_support_or_no_proposal'
         elif min(negatives, good) < min_check_groups:
-            status = "insufficient_class_check_support"
+            status = 'insufficient_class_check_support'
         elif rewritten / negatives > cutoff_limit or spoiled / good > cutoff_limit:
-            status = "class_check_budget_exceeded"
+            status = 'class_check_budget_exceeded'
         else:
-            status = "enabled"
+            status = 'enabled'
             proposed_changes |= route_check & changes
         routes[str(int(original))] = {
-            "status": status,
-            "threshold": threshold if status == "enabled" else None,
-            "fitted_threshold": threshold,
-            "check_negative_groups": negatives,
-            "check_rewritten_negative_groups": rewritten,
-            "check_originally_correct_groups": good,
-            "check_spoiled_groups": spoiled,
-            "fit_negative_groups": candidate["fit_negative_groups"],
+            'status': status,
+            'threshold': threshold if status == 'enabled' else None,
+            'fitted_threshold': threshold,
+            'check_negative_groups': negatives,
+            'check_rewritten_negative_groups': rewritten,
+            'check_originally_correct_groups': good,
+            'check_spoiled_groups': spoiled,
+            'fit_negative_groups': candidate['fit_negative_groups'],
         }
     total, altered = _counts(inverse, check & negative, proposed_changes)
     if total < min_check_groups:
-        status = "insufficient_pooled_check_support"
+        status = 'insufficient_pooled_check_support'
     elif altered / total > cutoff_limit:
-        status = "pooled_check_budget_exceeded"
-    elif any(item["status"] == "enabled" for item in routes.values()):
-        status = "enabled"
+        status = 'pooled_check_budget_exceeded'
+    elif any(item['status'] == 'enabled' for item in routes.values()):
+        status = 'enabled'
     else:
-        status = "no_eligible_route"
+        status = 'no_eligible_route'
     return {
-        "schema_version": 1,
-        "policy": "source_class_grouped_cal_guard",
-        "status": status,
-        "eligible_classes": np.flatnonzero(mask).tolist(),
-        "fit_group_count": len(unique) - len(order) // 3,
-        "check_group_count": len(order) // 3,
-        "fit_check_group_overlap": 0,
-        "max_rewrite_rate": float(max_rewrite_rate),
-        "check_limit": cutoff_limit,
-        "min_negative_groups": min_negative_groups,
-        "min_check_groups": min_check_groups,
-        "pooled_fit": pooled,
-        "pooled_check_negative_groups": total,
-        "pooled_check_rewritten_negative_groups": altered,
-        "source_routes": routes,
+        'schema_version': 1,
+        'policy': 'source_class_grouped_cal_guard',
+        'status': status,
+        'eligible_classes': np.flatnonzero(mask).tolist(),
+        'fit_group_count': len(unique) - len(order) // 3,
+        'check_group_count': len(order) // 3,
+        'fit_check_group_overlap': 0,
+        'max_rewrite_rate': float(max_rewrite_rate),
+        'check_limit': cutoff_limit,
+        'min_negative_groups': min_negative_groups,
+        'min_check_groups': min_check_groups,
+        'pooled_fit': pooled,
+        'pooled_check_negative_groups': total,
+        'pooled_check_rewritten_negative_groups': altered,
+        'source_routes': routes,
     }
 
 
 def predict_source_guard(base_predictions, scores, eligible, receipt):
+    """Apply the fitted CAL guard to base labels and subtype scores for eligible classes.
+
+    Return a copy of the labels with only approved subtype changes. The binary alarms retain their original values.
+    """
     base, scores, mask = _inputs(base_predictions, scores, eligible)
     if (
-        receipt.get("policy") != "source_class_grouped_cal_guard"
-        or receipt.get("schema_version") != 1
-        or receipt.get("eligible_classes") != np.flatnonzero(mask).tolist()
+        receipt.get('policy') != 'source_class_grouped_cal_guard'
+        or receipt.get('schema_version') != 1
+        or receipt.get('eligible_classes') != np.flatnonzero(mask).tolist()
     ):
-        raise ValueError("CAL protection receipt differs from the prediction route")
-    if receipt["status"] != "enabled":
+        raise ValueError('CAL protection receipt differs from the prediction route')
+    if receipt['status'] != 'enabled':
         return base.copy()
     proposal, margin = _proposal(base, scores, mask)
     result = base.copy()
-    for original, item in receipt["source_routes"].items():
-        if item["status"] != "enabled":
+    for original, item in receipt['source_routes'].items():
+        if item['status'] != 'enabled':
             continue
-        threshold = item["threshold"]
+        threshold = item['threshold']
         source = int(original)
         if not 0 < source < len(mask) or not np.isfinite(threshold):
-            raise ValueError("Invalid enabled source-class route")
+            raise ValueError('Invalid enabled source-class route')
         change = (base == source) & (margin > threshold)
         result[change] = proposal[change]
     return result

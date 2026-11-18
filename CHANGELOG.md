@@ -4,8 +4,17 @@
 
 - Use root `main.py` for full review, synthetic check, focused experiments,
   continuation and report export.
-- A no-argument launch runs the synthetic check if the required datasets are
-  absent and starts a fresh full review when all inputs are present.
+- Run a fresh review when all inputs are present and list missing inputs
+  otherwise. Use `--demo` or `--smoke` for a synthetic check.
+- Bind frozen receiver artifacts and score routing to the original run. Verify
+  unsigned result directories by running the sealed scoring again.
+- Preserve completion status when rebuilding reports. Reject duplicate summary
+  rows and mixed evaluation roles before publication.
+- Serialize local collector requests and bound send and receive operations.
+  Reject incomplete declared LAN sessions.
+- Record donor qualification on the CAL split the case actually uses.
+- Retain reference candidate random streams by default for NB15. A separate
+  exploratory run can select independent client streams.
 - Include both NB15 detector weight and CAL threshold studies in the full review.
 - Retain original evidence receipts and write the new workflow under `outputs/fedcaid_review`.
 - Move retired launchers and historical runner source to a separate archive.

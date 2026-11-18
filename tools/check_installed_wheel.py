@@ -36,7 +36,11 @@ if any(not path.is_relative_to(prefix) for path in modules.values()):
 assert not package.entry_points
 assert project_root(modules['src._iov_layout']) == Path.cwd().resolve()
 data = resources.files('src.fedcaid_resources')
-compatibility = ('frozen_format_compatibility.json', 'package_import_compatibility.json')
+compatibility = (
+    'frozen_format_compatibility.json',
+    'package_import_compatibility.json',
+    'source_normalization_compatibility.json',
+)
 assert all(data.joinpath(name).is_file() for name in compatibility)
 expected = ('recipe.json', 'heldout_identities.csv', 'excluded_identities.csv')
 datasets = ('CIC-IoV-2024', 'Car-Hacking', 'CIC-IDS-2017', 'CIC-UNSW-NB15')
@@ -83,7 +87,16 @@ def _parse_args():
 def _run(command, root):
     """Run outside the checkout with Python path overrides removed."""
     allowed = {key: value for key, value in os.environ.items() if key not in {"PYTHONPATH", "PYTHONHOME"}}
-    return subprocess.run(command, cwd=root, env=allowed, check=True, capture_output=True, text=True)
+    allowed['PYTHONUTF8'] = '1'
+    python, *arguments = command
+    return subprocess.run(
+        [python, '-X', 'utf8', *arguments],
+        cwd=root,
+        env=allowed,
+        check=True,
+        capture_output=True,
+        encoding='utf-8',
+    )
 
 
 def _installation(root, args):

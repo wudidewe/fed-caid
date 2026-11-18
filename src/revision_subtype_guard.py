@@ -6,20 +6,19 @@ import numpy as np
 
 from .revision_fixed_subtype import _eligible, _label_vector
 
-
-GUARDED_ROUTING = "calibrated_missing_attack_margin_v1"
+GUARDED_ROUTING = 'calibrated_missing_attack_margin_v1'
 _LOG_SCORE_FLOOR = 1e-12
 _GUARD_FIELDS = {
-    "schema_version",
-    "status",
-    "eligible_classes",
-    "threshold",
-    "max_rewrite_rate",
-    "min_negative_groups",
-    "fit_negative_groups",
-    "fit_rewritten_groups",
+    'schema_version',
+    'status',
+    'eligible_classes',
+    'threshold',
+    'max_rewrite_rate',
+    'min_negative_groups',
+    'fit_negative_groups',
+    'fit_rewritten_groups',
 }
-_CHECK_DISABLED = {"insufficient_check_negative_groups", "check_rewrite_budget_exceeded"}
+_CHECK_DISABLED = {'insufficient_check_negative_groups', 'check_rewrite_budget_exceeded'}
 
 
 def _scores(values):
@@ -27,11 +26,11 @@ def _scores(values):
     if (
         scores.ndim != 2
         or scores.shape[1] < 2
-        or scores.dtype.kind not in "fiu"
+        or scores.dtype.kind not in 'fiu'
         or not np.isfinite(scores).all()
         or (scores < 0).any()
     ):
-        raise ValueError("Expected aligned finite nonnegative scores for BENIGN and each attack")
+        raise ValueError('Expected aligned finite nonnegative scores for BENIGN and each attack')
     return scores
 
 
@@ -65,10 +64,10 @@ def target_attack_margin(scores, target):
 def _inputs(base_predictions, scores, eligible):
     scores = _scores(scores)
     classes = scores.shape[1]
-    base = _label_vector(base_predictions, classes, "Base predictions").astype(np.int64, copy=False)
+    base = _label_vector(base_predictions, classes, 'Base predictions').astype(np.int64, copy=False)
     eligible_mask = _eligible(eligible, classes)
     if len(base) != len(scores):
-        raise ValueError("Base predictions and subtype scores must align by row")
+        raise ValueError('Base predictions and subtype scores must align by row')
     return base, scores, eligible_mask
 
 
@@ -88,16 +87,16 @@ def _proposal(base, scores, eligible_mask):
 
 
 def _calibration_inputs(base, labels, eligible_mask, group_ids):
-    truth = _label_vector(labels, len(eligible_mask), "CAL labels")
+    truth = _label_vector(labels, len(eligible_mask), 'CAL labels')
     groups = np.arange(len(base)) if group_ids is None else np.asarray(group_ids)
     if (
         truth.shape != base.shape
         or groups.shape != base.shape
-        or groups.dtype.kind not in "iubfSUV"
-        or groups.dtype.kind == "f"
+        or groups.dtype.kind not in 'iubfSUV'
+        or groups.dtype.kind == 'f'
         and not np.isfinite(groups).all()
     ):
-        raise ValueError("CAL labels and exact feature-group IDs must align by row")
+        raise ValueError('CAL labels and exact feature-group IDs must align by row')
     negatives = (base > 0) & ~eligible_mask[truth]
     unique, inverse = np.unique(groups[negatives], return_inverse=True)
     return negatives, len(unique), inverse
@@ -105,7 +104,7 @@ def _calibration_inputs(base, labels, eligible_mask, group_ids):
 
 def _validate_budget(rate, support):
     if type(rate) not in (float, int) or not 0 <= rate < 1 or type(support) is not int or support < 1:
-        raise ValueError("Expected an empirical rewrite rate in [0, 1) and a positive group support floor")
+        raise ValueError('Expected an empirical rewrite rate in [0, 1) and a positive group support floor')
 
 
 def validate_subtype_guard(guard, *, eligible=None):
@@ -113,31 +112,31 @@ def validate_subtype_guard(guard, *, eligible=None):
     if (
         not isinstance(guard, dict)
         or set(guard) != _GUARD_FIELDS
-        or type(guard["schema_version"]) is not int
-        or guard["schema_version"] != 1
+        or type(guard['schema_version']) is not int
+        or guard['schema_version'] != 1
     ):
-        raise ValueError("Invalid subtype guard receipt schema")
-    allowed = guard["eligible_classes"]
+        raise ValueError('Invalid subtype guard receipt schema')
+    allowed = guard['eligible_classes']
     if (
         not isinstance(allowed, list)
         or any(type(i) is not int or i < 1 for i in allowed)
         or allowed != sorted(set(allowed))
     ):
-        raise ValueError("Subtype guard eligible classes differ from routing")
+        raise ValueError('Subtype guard eligible classes differ from routing')
     if eligible is not None:
         expected = tuple(eligible)
         if (
             any(isinstance(i, (bool, np.bool_)) or not isinstance(i, (int, np.integer)) for i in expected)
             or sorted(expected) != allowed
         ):
-            raise ValueError("Subtype guard eligible classes differ from routing")
-    support = guard["min_negative_groups"]
-    rate = guard["max_rewrite_rate"]
+            raise ValueError('Subtype guard eligible classes differ from routing')
+    support = guard['min_negative_groups']
+    rate = guard['max_rewrite_rate']
     _validate_budget(rate, support)
-    status, threshold = guard["status"], guard["threshold"]
+    status, threshold = guard['status'], guard['threshold']
     if type(status) is not str:
-        raise ValueError("Invalid subtype guard status or threshold")
-    total, rewritten = guard["fit_negative_groups"], guard["fit_rewritten_groups"]
+        raise ValueError('Invalid subtype guard status or threshold')
+    total, rewritten = guard['fit_negative_groups'], guard['fit_rewritten_groups']
     if (
         type(total) is not int
         or type(rewritten) is not int
@@ -145,24 +144,24 @@ def validate_subtype_guard(guard, *, eligible=None):
         or total
         and rewritten / total > rate
     ):
-        raise ValueError("Invalid subtype guard group counts")
+        raise ValueError('Invalid subtype guard group counts')
     if not allowed:
-        valid = status == "no_eligible_attacks"
+        valid = status == 'no_eligible_attacks'
     elif total < support:
-        valid = status == "insufficient_negative_groups"
-    elif status == "calibrated":
+        valid = status == 'insufficient_negative_groups'
+    elif status == 'calibrated':
         valid = type(threshold) in (float, int) and -math.inf < threshold < math.inf
     else:
-        valid = status == "no_rewrite_candidates" or status in _CHECK_DISABLED
+        valid = status == 'no_rewrite_candidates' or status in _CHECK_DISABLED
     if (
         not valid
-        or status != "calibrated"
+        or status != 'calibrated'
         and threshold is not None
-        or status != "calibrated"
+        or status != 'calibrated'
         and status not in _CHECK_DISABLED
         and rewritten
     ):
-        raise ValueError("Invalid subtype guard status or threshold")
+        raise ValueError('Invalid subtype guard status or threshold')
     return guard
 
 
@@ -188,14 +187,14 @@ def fit_subtype_guard(
     base, scores, eligible_mask = _inputs(base_predictions, scores, eligible)
     negative, n_groups, inverse = _calibration_inputs(base, labels, eligible_mask, group_ids)
     guard = {
-        "schema_version": 1,
-        "status": "insufficient_negative_groups" if eligible_mask.any() else "no_eligible_attacks",
-        "eligible_classes": np.flatnonzero(eligible_mask).tolist(),
-        "threshold": None,
-        "max_rewrite_rate": float(max_rewrite_rate),
-        "min_negative_groups": min_negative_groups,
-        "fit_negative_groups": n_groups,
-        "fit_rewritten_groups": 0,
+        'schema_version': 1,
+        'status': 'insufficient_negative_groups' if eligible_mask.any() else 'no_eligible_attacks',
+        'eligible_classes': np.flatnonzero(eligible_mask).tolist(),
+        'threshold': None,
+        'max_rewrite_rate': float(max_rewrite_rate),
+        'min_negative_groups': min_negative_groups,
+        'fit_negative_groups': n_groups,
+        'fit_rewritten_groups': 0,
     }
     if not eligible_mask.any() or n_groups < min_negative_groups:
         return guard
@@ -204,7 +203,7 @@ def fit_subtype_guard(
     np.maximum.at(group_margin, inverse, np.where(candidate != base[negative], margins, -np.inf))
     finite = group_margin[np.isfinite(group_margin)]
     if not len(finite):
-        guard["status"] = "no_rewrite_candidates"
+        guard['status'] = 'no_rewrite_candidates'
         return guard
     allowed = math.floor(n_groups * max_rewrite_rate)
     if allowed / n_groups > max_rewrite_rate:
@@ -217,7 +216,7 @@ def fit_subtype_guard(
     else:
         threshold = float(np.nextafter(finite.min(), -np.inf))
     guard.update(
-        status="calibrated",
+        status='calibrated',
         threshold=threshold,
         fit_rewritten_groups=int(np.count_nonzero(group_margin > threshold)),
     )
@@ -226,7 +225,7 @@ def fit_subtype_guard(
 
 def _apply_guard(base, scores, eligible_mask, guard):
     validate_subtype_guard(guard, eligible=np.flatnonzero(eligible_mask))
-    threshold = guard["threshold"]
+    threshold = guard['threshold']
     if threshold is None:
         return base.copy()
     candidate, margin = _proposal(base, scores, eligible_mask)
@@ -249,12 +248,12 @@ def audit_subtype_guard(base_predictions, scores, labels, eligible, guard, group
     groups_rewritten = len(np.unique(inverse[changed]))
     rate = groups_rewritten / n_groups if n_groups else None
     return {
-        "negative_rows": int(negative.sum()),
-        "negative_groups": n_groups,
-        "rewritten_negative_rows": negative_rewritten,
-        "rewritten_negative_groups": groups_rewritten,
-        "negative_group_rewrite_rate": rate,
-        "meets_empirical_budget": rate <= guard["max_rewrite_rate"] if rate is not None else None,
+        'negative_rows': int(negative.sum()),
+        'negative_groups': n_groups,
+        'rewritten_negative_rows': negative_rewritten,
+        'rewritten_negative_groups': groups_rewritten,
+        'negative_group_rewrite_rate': rate,
+        'meets_empirical_budget': rate <= guard['max_rewrite_rate'] if rate is not None else None,
     }
 
 
@@ -276,22 +275,22 @@ def apply_cal_check(
     """
     _validate_budget(check_tolerance, min_check_groups)
     audit = audit_subtype_guard(base_predictions, scores, labels, eligible, guard, group_ids)
-    limit = min(1.0, guard["max_rewrite_rate"] + check_tolerance)
-    status = "not_applicable"
-    if guard["status"] == "calibrated":
-        if audit["negative_groups"] < min_check_groups:
-            status = "insufficient_check_negative_groups"
-        elif audit["negative_group_rewrite_rate"] > limit:
-            status = "check_rewrite_budget_exceeded"
+    limit = min(1.0, guard['max_rewrite_rate'] + check_tolerance)
+    status = 'not_applicable'
+    if guard['status'] == 'calibrated':
+        if audit['negative_groups'] < min_check_groups:
+            status = 'insufficient_check_negative_groups'
+        elif audit['negative_group_rewrite_rate'] > limit:
+            status = 'check_rewrite_budget_exceeded'
         else:
-            status = "passed"
+            status = 'passed'
     audit.update(
         check_status=status,
         check_limit=limit,
         check_support=min_check_groups,
         check_tolerance=float(check_tolerance),
-        original_fit_threshold=guard["threshold"],
+        original_fit_threshold=guard['threshold'],
     )
     if status in _CHECK_DISABLED:
-        guard = validate_subtype_guard({**guard, "status": status, "threshold": None})
+        guard = validate_subtype_guard({**guard, 'status': status, 'threshold': None})
     return guard, audit

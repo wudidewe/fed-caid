@@ -7,10 +7,10 @@ a training-loss term, consistent with the original raw detector inference.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from hashlib import sha256
 from io import BytesIO
-import math
 from pathlib import Path
 from pickle import UnpicklingError
 
@@ -19,10 +19,9 @@ import torch
 
 from . import utils as core
 
-
-SCHEMA = "fedcaid_raw_cross_tabm_v1"
-MODEL_KIND = "ple_cross"
-INFERENCE_RULE = "mean_ensemble_probability_without_prior_offset"
+SCHEMA = 'fedcaid_raw_cross_tabm_v1'
+MODEL_KIND = 'ple_cross'
+INFERENCE_RULE = 'mean_ensemble_probability_without_prior_offset'
 
 
 def _names(values):
@@ -43,33 +42,33 @@ def _finite_vector(tensor, width, dtype):
     )
 
 
-def save_tabm_checkpoint(path, node, *, batch_size=1024, inference_device="cpu"):
+def save_tabm_checkpoint(path, node, *, batch_size=1024, inference_device='cpu'):
     """Export a fitted local detector before the experiment releases it."""
     path = Path(path).resolve()
     payload = {
-        "schema": SCHEMA,
-        "model_kind": MODEL_KIND,
-        "inference_rule": INFERENCE_RULE,
-        "client_id": node.client_id,
-        "class_names": list(node.names),
-        "feature_names": list(node.features),
-        "ple_boundary_policy": node.model.ple_boundary_policy,
-        "ple_boundary_version": core.PLE_BOUNDARY_VERSION,
-        "bins": [value.detach().cpu().clone() for value in node.bins],
-        "transform": {
-            "median": torch.as_tensor(node.transform.median, dtype=torch.float32).clone(),
-            "mean": torch.as_tensor(node.transform.mean, dtype=torch.float64).clone(),
-            "scale": torch.as_tensor(node.transform.scale, dtype=torch.float64).clone(),
-            "neural": bool(node.transform.neural),
+        'schema': SCHEMA,
+        'model_kind': MODEL_KIND,
+        'inference_rule': INFERENCE_RULE,
+        'client_id': node.client_id,
+        'class_names': list(node.names),
+        'feature_names': list(node.features),
+        'ple_boundary_policy': node.model.ple_boundary_policy,
+        'ple_boundary_version': core.PLE_BOUNDARY_VERSION,
+        'bins': [value.detach().cpu().clone() for value in node.bins],
+        'transform': {
+            'median': torch.as_tensor(node.transform.median, dtype=torch.float32).clone(),
+            'mean': torch.as_tensor(node.transform.mean, dtype=torch.float64).clone(),
+            'scale': torch.as_tensor(node.transform.scale, dtype=torch.float64).clone(),
+            'neural': bool(node.transform.neural),
         },
-        "state": {key: value.detach().cpu().clone() for key, value in node.model.state_dict().items()},
-        "train_log_prior": torch.as_tensor(node.log_prior, dtype=torch.float64).clone(),
-        "prior_strength": float(node.prior_strength),
-        "batch_size": batch_size,
-        "inference_device": str(inference_device),
+        'state': {key: value.detach().cpu().clone() for key, value in node.model.state_dict().items()},
+        'train_log_prior': torch.as_tensor(node.log_prior, dtype=torch.float64).clone(),
+        'prior_strength': float(node.prior_strength),
+        'batch_size': batch_size,
+        'inference_device': str(inference_device),
     }
     _validate(payload, node.names, node.features)
-    with path.open("xb") as stream:
+    with path.open('xb') as stream:
         try:
             torch.save(payload, stream)
         except BaseException:
@@ -77,44 +76,44 @@ def save_tabm_checkpoint(path, node, *, batch_size=1024, inference_device="cpu")
             path.unlink(missing_ok=True)
             raise
     return {
-        "file": str(path),
-        "sha256": core.sha(path),
-        "schema": SCHEMA,
-        "client_id": payload["client_id"],
-        "batch_size": batch_size,
-        "inference_device": payload["inference_device"],
+        'file': str(path),
+        'sha256': core.sha(path),
+        'schema': SCHEMA,
+        'client_id': payload['client_id'],
+        'batch_size': batch_size,
+        'inference_device': payload['inference_device'],
     }
 
 
 def _validate(payload, names, features):
     if (
         not isinstance(payload, dict)
-        or payload.get("schema") != SCHEMA
-        or payload.get("model_kind") != MODEL_KIND
-        or payload.get("inference_rule") != INFERENCE_RULE
-        or payload.get("ple_boundary_version") != core.PLE_BOUNDARY_VERSION
-        or payload.get("ple_boundary_policy") not in core.PLE_BOUNDARY_POLICIES
+        or payload.get('schema') != SCHEMA
+        or payload.get('model_kind') != MODEL_KIND
+        or payload.get('inference_rule') != INFERENCE_RULE
+        or payload.get('ple_boundary_version') != core.PLE_BOUNDARY_VERSION
+        or payload.get('ple_boundary_policy') not in core.PLE_BOUNDARY_POLICIES
     ):
-        raise ValueError("Unrecognized frozen raw TabM model schema or boundary policy")
-    classes, inputs = payload.get("class_names"), payload.get("feature_names")
-    if not _names(classes) or len(classes) < 2 or classes[0] != "BENIGN" or not _names(inputs):
-        raise ValueError("Frozen TabM requires unique feature names and a BENIGN-first class order")
+        raise ValueError('Unrecognized frozen raw TabM model schema or boundary policy')
+    classes, inputs = payload.get('class_names'), payload.get('feature_names')
+    if not _names(classes) or len(classes) < 2 or classes[0] != 'BENIGN' or not _names(inputs):
+        raise ValueError('Frozen TabM requires unique feature names and a BENIGN-first class order')
     if (names is not None and tuple(classes) != tuple(names)) or (
         features is not None and tuple(inputs) != tuple(features)
     ):
-        raise ValueError("Frozen TabM class or feature order differs")
+        raise ValueError('Frozen TabM class or feature order differs')
     width = len(inputs)
-    transform = payload.get("transform")
+    transform = payload.get('transform')
     if (
         not isinstance(transform, dict)
-        or transform.get("neural") is not True
-        or not _finite_vector(transform.get("median"), width, torch.float32)
-        or not _finite_vector(transform.get("mean"), width, torch.float64)
-        or not _finite_vector(transform.get("scale"), width, torch.float64)
-        or not bool((transform["scale"] > 0).all())
+        or transform.get('neural') is not True
+        or not _finite_vector(transform.get('median'), width, torch.float32)
+        or not _finite_vector(transform.get('mean'), width, torch.float64)
+        or not _finite_vector(transform.get('scale'), width, torch.float64)
+        or not bool((transform['scale'] > 0).all())
     ):
-        raise ValueError("Invalid frozen TabM TRAIN preprocessing")
-    bins, state = payload.get("bins"), payload.get("state")
+        raise ValueError('Invalid frozen TabM TRAIN preprocessing')
+    bins, state = payload.get('bins'), payload.get('state')
     if (
         not isinstance(bins, list)
         or len(bins) != width
@@ -128,7 +127,7 @@ def _validate(payload, names, features):
             for edges in bins
         )
     ):
-        raise ValueError("Invalid frozen TabM TRAIN bins")
+        raise ValueError('Invalid frozen TabM TRAIN bins')
     if (
         not isinstance(state, dict)
         or not state
@@ -140,9 +139,9 @@ def _validate(payload, names, features):
             for key, value in state.items()
         )
     ):
-        raise ValueError("Invalid frozen TabM tensor state")
-    prior, strength = payload.get("train_log_prior"), payload.get("prior_strength")
-    client_id = payload.get("client_id")
+        raise ValueError('Invalid frozen TabM tensor state')
+    prior, strength = payload.get('train_log_prior'), payload.get('prior_strength')
+    client_id = payload.get('client_id')
     if (
         not isinstance(client_id, str)
         or not client_id
@@ -150,11 +149,11 @@ def _validate(payload, names, features):
         or type(strength) not in (int, float)
         or not math.isfinite(strength)
         or not 0 <= strength <= 1
-        or type(payload.get("batch_size")) is not int
-        or payload["batch_size"] < 1
-        or payload.get("inference_device") not in ("cpu", "cuda")
+        or type(payload.get('batch_size')) is not int
+        or payload['batch_size'] < 1
+        or payload.get('inference_device') not in ('cpu', 'cuda')
     ):
-        raise ValueError("Invalid frozen TabM provenance or inference settings")
+        raise ValueError('Invalid frozen TabM provenance or inference settings')
 
 
 @dataclass(frozen=True)
@@ -172,10 +171,10 @@ class FrozenTabMPredictor:
     def __call__(self, x, *, batch_size=None):
         x = np.asarray(x)
         batch = self.batch_size if batch_size is None else batch_size
-        if x.ndim != 2 or x.shape[1] != len(self.features) or x.dtype.kind not in "fiu":
-            raise ValueError("Expected a numeric feature matrix in the frozen TabM feature order")
+        if x.ndim != 2 or x.shape[1] != len(self.features) or x.dtype.kind not in 'fiu':
+            raise ValueError('Expected a numeric feature matrix in the frozen TabM feature order')
         if type(batch) is not int or batch < 1:
-            raise ValueError("Frozen TabM inference batch size must be a positive integer")
+            raise ValueError('Frozen TabM inference batch size must be a positive integer')
         output = np.empty((len(x), len(self.names)), dtype=np.float64)
         chunk = 32 * batch
         for start in range(0, len(x), chunk):
@@ -183,21 +182,21 @@ class FrozenTabMPredictor:
             logp = core.log_prediction(self.model, self.transform(x[at]), self.inference_device, batch)
             output[at] = core.probabilities(logp)
         if not np.isfinite(output).all():
-            raise FloatingPointError("Frozen raw TabM produced nonfinite probabilities")
+            raise FloatingPointError('Frozen raw TabM produced nonfinite probabilities')
         return output
 
 
 def tabm_node_predictor(node, *, batch_size=1024):
     """Reuse the trained CPU node with the same scoring path as a frozen detector."""
-    if any(value.device.type != "cpu" for value in node.model.parameters()):
-        raise ValueError("The raw TabM node must be on CPU for canonical inference")
+    if any(value.device.type != 'cpu' for value in node.model.parameters()):
+        raise ValueError('The raw TabM node must be on CPU for canonical inference')
     return FrozenTabMPredictor(
         node.model.eval(),
         node.transform,
         tuple(node.names),
         tuple(node.features),
         node.client_id,
-        "cpu",
+        'cpu',
         batch_size,
     )
 
@@ -206,43 +205,46 @@ def load_tabm_checkpoint(path, *, expected_sha256=None, names=None, features=Non
     """Load and verify one frozen detector without unpickling custom objects."""
     data = Path(path).read_bytes()
     if expected_sha256 is not None and sha256(data).hexdigest() != expected_sha256:
-        raise ValueError("Frozen TabM checkpoint SHA256 differs")
+        raise ValueError('Frozen TabM checkpoint SHA256 differs')
     try:
-        payload = torch.load(BytesIO(data), map_location="cpu", weights_only=True)
+        payload = torch.load(BytesIO(data), map_location='cpu', weights_only=True)
     except (RuntimeError, UnpicklingError, EOFError) as error:
-        raise ValueError("Invalid frozen TabM checkpoint data") from error
+        raise ValueError('Invalid frozen TabM checkpoint data') from error
     _validate(payload, names, features)
-    device = payload["inference_device"] if device is None else str(device)
-    if device not in ("cpu", "cuda") or device == "cuda" and not torch.cuda.is_available():
-        raise ValueError(f"Unsupported or unavailable frozen TabM inference device: {device}")
-    classes, inputs = tuple(payload["class_names"]), tuple(payload["feature_names"])
+    device = payload['inference_device'] if device is None else str(device)
+    if device not in ('cpu', 'cuda') or device == 'cuda' and not torch.cuda.is_available():
+        raise ValueError(f'Unsupported or unavailable frozen TabM inference device: {device}')
+    classes, inputs = tuple(payload['class_names']), tuple(payload['feature_names'])
     with torch.random.fork_rng(devices=[]):
         model, _ = core.make_model(
             len(inputs),
             len(classes),
             MODEL_KIND,
-            bins=payload["bins"],
-            ple_boundary_policy=payload["ple_boundary_policy"],
+            bins=payload['bins'],
+            ple_boundary_policy=payload['ple_boundary_policy'],
         )
-    state = payload["state"]
+    state = payload['state']
     expected = model.state_dict()
     if expected.keys() != state.keys() or any(
         expected[key].shape != state[key].shape or expected[key].dtype != state[key].dtype for key in expected
     ):
-        raise ValueError("Frozen TabM tensor schema differs from the reconstructed detector")
+        raise ValueError('Frozen TabM tensor schema differs from the reconstructed detector')
     model.load_state_dict(state, strict=True)
     model.to(device).eval()
-    saved = payload["transform"]
-    transform = core.Transform.restore({
-        "median": saved["median"].numpy(),
-        "mean": saved["mean"].numpy(),
-        "scale": saved["scale"].numpy(),
-        "neural": True,
-    })
-    return FrozenTabMPredictor(
-        model, transform, classes, inputs, payload["client_id"], device, payload["batch_size"]
+    saved = payload['transform']
+    transform = core.Transform.restore(
+        {
+            'median': saved['median'].numpy(),
+            'mean': saved['mean'].numpy(),
+            'scale': saved['scale'].numpy(),
+            'neural': True,
+        }
     )
+    return FrozenTabMPredictor(model, transform, classes, inputs, payload['client_id'], device, payload['batch_size'])
 
 
 def predict_tabm_checkpoint(path, x, *, batch_size=None, device=None):
+    """Load the frozen detector at path and return class probabilities for feature rows x. Optional batch size and
+    device override the saved defaults.
+    """
     return load_tabm_checkpoint(path, device=device)(x, batch_size=batch_size)

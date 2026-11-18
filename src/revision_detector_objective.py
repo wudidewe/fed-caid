@@ -4,14 +4,13 @@ import torch
 
 from . import utils as core
 
-
-HARD_BENIGN = "hard_benign"
+HARD_BENIGN = 'hard_benign'
 DETECTOR_OBJECTIVES = (*core.DETECTOR_OBJECTIVES, HARD_BENIGN)
 HARD_BENIGN_STRENGTH = 3.0
 LOSS_NAMES = {
-    "prior_adjusted": "tempered_prior_adjusted_ce",
-    "class_balanced": "class_balanced_tempered_prior_adjusted_ce",
-    HARD_BENIGN: "hard_benign_tempered_prior_adjusted_ce",
+    'prior_adjusted': 'tempered_prior_adjusted_ce',
+    'class_balanced': 'class_balanced_tempered_prior_adjusted_ce',
+    HARD_BENIGN: 'hard_benign_tempered_prior_adjusted_ce',
 }
 
 
@@ -20,14 +19,14 @@ def objective_settings(objective):
     if objective != HARD_BENIGN:
         return core.detector_objective_settings(objective)
     return {
-        **core.detector_objective_settings("prior_adjusted"),
-        "detector_objective": HARD_BENIGN,
-        "hard_benign_weight_strength": HARD_BENIGN_STRENGTH,
-        "hard_benign_weight_rule": "1 + strength * attack_probability ** 2",
-        "hard_benign_weight_scope": "current TRAIN minibatch, normalized among benign rows",
-        "hard_benign_score": "sum of attack probabilities from detached, unadjusted TabM logits",
-        "hard_benign_attack_weight": 1.0,
-        "extra_optimizer_steps": 0,
+        **core.detector_objective_settings('prior_adjusted'),
+        'detector_objective': HARD_BENIGN,
+        'hard_benign_weight_strength': HARD_BENIGN_STRENGTH,
+        'hard_benign_weight_rule': '1 + strength * attack_probability ** 2',
+        'hard_benign_weight_scope': 'current TRAIN minibatch, normalized among benign rows',
+        'hard_benign_score': 'sum of attack probabilities from detached, unadjusted TabM logits',
+        'hard_benign_attack_weight': 1.0,
+        'extra_optimizer_steps': 0,
     }
 
 
