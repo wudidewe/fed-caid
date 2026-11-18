@@ -178,7 +178,7 @@ def _smoke_nb15(root):
 def _smoke():
     """Exercise all current native paths and the focused report on synthetic CPU data."""
     with TemporaryDirectory(prefix="fedcaid_smoke_") as temporary:
-        root = Path(temporary)
+        root = Path(temporary).resolve()
         result = _smoke_case(root / "reference", ["--dataset", "CIC-IDS-2017", "--single-donor"])
         if result:
             return result
