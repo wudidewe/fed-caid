@@ -202,7 +202,7 @@ def _smoke():
     """Exercise all current native paths and the focused report on synthetic CPU data."""
     print('FedCAID | synthetic_only=True | CPU smoke suite for installation verification', flush=True)
     with TemporaryDirectory(prefix='fedcaid_smoke_') as temporary:
-        root = Path(temporary)
+        root = Path(temporary).resolve()
         result = _smoke_case(root / 'reference', ['--dataset', 'CIC-IDS-2017', '--single-donor'])
         if result:
             return result
