@@ -1,24 +1,19 @@
-# Review evidence and remaining external dependencies
+# Validation and reproduction
 
 The [FedCAID workflow](../README.md) links each saved result to its method
 and evaluation population. The original class offset has K−1 coordinates. The
 guarded shared linear subtype head has K(d+1) trainable parameters. FedAvg repair
 uses a separate full-weight donor. Use the corresponding communication rows for each.
 
-| Review concern | Executable evidence in this revision | What must still be demonstrated |
+| Area | Executable evidence | Scope |
 | --- | --- | --- |
-| Federated value | Conditional local/federated matched fits, old bias controls, donor-only cells, paired development decisions | Real-data efficacy; independent frozen evaluation after model development |
-| Robustness/leakage | Five-seed real plans, TRAIN/CAL-only target selection, role audits, VAL-only defaults | New independent capture/session data where feasible; reviewed TEST is exploratory |
-| Minority classes | Controlled VAL support/precision/recall/F1, per-class existing tables, cache threshold replay | Actual class-specific improvements without unacceptable FAR changes |
-| Security | Local two-process sharing plus TCP protocol validation and failure tests | Separate-host deployment; no guarantee against malicious parties or collusion |
-| Software comparison | Primary-source functional comparison | Same-configuration external framework timing if claimed |
-| Scale/cost | Fixed-total/fixed-local plans; actual framed message bytes; isolated cached adapter profiling | Real hardware/network measurements; adapter-only profiling excludes detector costs |
-| Reproducibility | Tests, smoke, wheel installation checker, CI configuration, provenance and resume checks | Public CI success, version/tag, archive DOI/capsule, author and dataset permission confirmation |
-
-Completion of a script cannot set all review requirements to complete. No DOI,
-public CI result, author contribution, data redistribution right or external
-validation is fabricated by the software. New experimental code is recorded as
-unreleased; historical runs retain their original manifests.
+| Federated contribution | Local, federated and donor controls with paired estimates | Development comparisons on matched evaluation rows |
+| Data separation | Five seeds, TRAIN and CAL target selection, exact input and role audits | Grouped development VAL for the main matrix. Retrospective TEST views for selected studies. |
+| Minority classes | Per class support, precision, recall and F1 | Interpret class metrics with support, FAR and FNR for the same view. |
+| Aggregation protocol | Local subprocess sharing, TCP protocol validation and failure tests | Trusted local host and noncolluding collectors |
+| Software comparison | Primary source feature comparison | Functional comparison |
+| Scale and cost | Fixed total and fixed client budgets, logical payload and framed application bytes | Separate detector, adapter and transport measurements |
+| Reproducibility | Unit tests, CPU smoke tests, wheel installation checker, CI and run manifests | The run receipt identifies the source, settings and available inputs. |
 
 The Windows and Linux CI jobs use `tools/check_installed_wheel.py --resolve-dependencies --cpu-torch`
 to install the wheel and its declared dependencies into a clean temporary venv,
@@ -27,11 +22,12 @@ inference outside the checkout.
 The receipt records both `dependency_resolution_tested` and `complete`. The
 job selects PyTorch from its official CPU wheel index.
 
-The paper still needs the original reviewers' full parameter table, software
-and code metadata tables, role/support table, CAN confusion matrices, equations
-(basis/prior/prox/clipping/encoding), readable figures, architecture/data-flow
-diagram, IoV proxy scope, NB15 source clarification, reference verification and
-accurate CRediT. Use the actual SoftwareX template at submission time.
+The [reference source commit](https://github.com/wudidewe/fed-caid/commit/6f72abd255d4782302fd27ac35f8061f529ec141)
+matches the Python source recorded by the 17 November 2026 run. See
+[review evidence](review_evidence.md) for the report tables and evaluation
+populations. Independent acquisition and LAN measurements use the optional
+declarations in [external preflight](external_preflight.md) and
+[protocol validation](protocol_validation.md).
 
 Threat model: client code, host and coordinator are trusted; clients clip
 honestly; collectors are honest-but-curious and do not collude. Each collector

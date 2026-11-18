@@ -111,7 +111,7 @@ class DownloadDemoTests(unittest.TestCase):
     def test_demo_can_allocate_output_for_the_native_runner(self):
         with (
             TemporaryDirectory() as directory,
-            patch.object(entry, "PROJECT", Path(directory)),
+            patch.object(entry, "PROJECT", Path(directory).resolve()),
             patch("src.revision_next.main", side_effect=self._synthetic_run),
             redirect_stdout(StringIO()),
         ):

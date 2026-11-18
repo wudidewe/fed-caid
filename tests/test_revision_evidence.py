@@ -143,7 +143,7 @@ class ReviewEvidenceTests(unittest.TestCase):
 
     def test_evidence_reuse_requires_matching_source_and_exports(self):
         with TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             run = root / "revision"
             output = root / "evidence"
             hashes = {"run.json": "example"}

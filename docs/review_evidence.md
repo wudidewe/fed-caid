@@ -1,31 +1,28 @@
 # Review evidence
 
-The archived 110-case revision run included these outputs in `review_evidence/`.
 With the four datasets in place, [main.py](../main.py) trains a new run and writes
-its report to `outputs/fedcaid_review/run_*/report/`.
+its report to `outputs/fedcaid_review/run_*/report/`. The 17 November 2026
+reference experiment used this workflow. The main benchmark evaluates the
+base detector, local and federated adapters, and full weight FedAvg on grouped
+development VAL. CAN quantization, transfer and temporal studies each have
+their own evaluation populations.
 
 | File | Use in the revision |
 | --- | --- |
-| `class_support.csv` | Support in TRAIN, CAL, VAL, TEST and exact-input unique TEST. A count of zero means absent. Counts 1–29 are flagged for interpretation. |
-| `class_test_recall.csv` | Full FedCAID TEST recall and variability by class, paired with the sample count for that evaluation population. |
-| `main_seed_intervals.csv` | Means, sample SD and seed mean intervals for the main comparisons. |
-| `main_paired_intervals.csv` | Differences within each seed before averaging, with counts of positive, negative and tied differences. |
-| `split_audit_summary.csv` | Exact input overlap and coverage from the source identity audit. |
-| `communication_tradeoff.csv` and `communication_payload.pdf` | Detection versus logical numeric payload by method. The figure shows payload medians and ranges across seeds on a logarithmic scale. |
+| `SUMMARY.md` and `evidence_coverage.csv` | Execution status, evaluation role and scope of each stage. |
+| `benchmark_operating_points.csv` | Grouped VAL performance, seed variation and logical communication payload for the main comparison. |
+| `benchmark_ablation_effects.csv` | Paired differences for the main benchmark. |
+| `benchmark_class_support.csv` | Class support, precision, recall and F1 on grouped VAL. |
+| `data_role_audit.csv` | Exact input overlap and role sizes. |
+| `matched_branch_metrics.csv` and `paired_evidence.csv` | Subtype results by seed and paired comparisons on matched alarms. |
+| `operating_decisions.csv` and `nb15_binary_working_points.csv` | Operating criteria, false alarms and missed attacks for the relevant comparisons. |
 
-These evidence tables summarize the reference objective. The run directory
-also contains `balance_vs_reference.csv` for the prespecified comparison
-of the two detector objectives, including all metrics and fixed test views.
-
-The 95% Student t intervals describe variation across runs on each fixed test
-population. They are approximate with five seeds. Identical results across
-seeds give a zero interval width. The intervals give no estimate of sampling
-uncertainty across independent captures. There is one TEST population per
-dataset and protocol. Report its actual class support rather than multiplying
-the count by the number of seeds. The exact-input unique view keeps one row
-per eligible input. The main test remains unchanged and no minority class is
-duplicated to raise support. A macro F1 on a subset averages only classes with
-true support in that subset.
+The 95% Student t intervals describe variation across seeds on a fixed
+evaluation population. An exact input unique view keeps one eligible row per
+input. Class support counts the records in that evaluation population. Macro
+F1 averages classes with true support in the view being reported. Independent
+capture confirmation requires the separately declared acquisition described
+in [external confirmation](external_confirmation.md).
 
 ## Software comparison
 

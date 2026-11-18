@@ -66,7 +66,8 @@ python main.py --collector --bind COLLECTOR_A_LAN_IP --port 8761 --sessions 6 --
 python main.py --collector --bind COLLECTOR_B_LAN_IP --port 8762 --sessions 6 --timeout 60
 ```
 
-On the benchmark orchestrator, click **FedCAID 一键运行** with the LAN manifest in place.
+With the LAN manifest in place, run the **FedCAID** configuration in PyCharm or
+run `python main.py --full-review` from the repository root on the orchestrator.
 
 `--sessions` must cover the number of distinct roster-size conditions. A
 collector serves at most that many TCP sessions and exits. It also exits after

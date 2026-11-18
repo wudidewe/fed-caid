@@ -25,7 +25,7 @@ Version bindings used for this comparison:
 | Flower | Official release/tag `framework-1.43.0` | `4f9be0fd56b82c60112d81dc78b7961445381ca7`; tag resolved and SecAgg+ example read at this commit. |
 | FedML | Official release/tag `v0.8.9` | `f352cfb5a59f63d4f85ede43682962a5f9ea4a6a`; tag resolved and README checked. This chosen stable reference is not a claim that all current platform features exist in that tag. |
 | FATE | Official release/tag `v2.2.0` | `d4d8dd8557397c149634709ac319b544375ec0ae`; tag resolved and README checked. |
-| FedCAID | Local revision and receipt-bound implementation | See the generated report's source hashes and release record. Public release/archive binding remains pending until the corresponding artifact is actually published. |
+| FedCAID | Reference experiment run on 17 November 2026 | The [reference source commit](https://github.com/wudidewe/fed-caid/commit/6f72abd255d4782302fd27ac35f8061f529ec141) matches the experiment's Python source hashes. |
 
 The three framework tags were resolved through their official GitHub repositories;
 the two IDS source snapshots were obtained from the author repositories on the

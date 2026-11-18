@@ -1,30 +1,6 @@
 # Dataset setup
 
-The complete four-dataset bundle is provided as separate [Release attachments](https://gitee.com/liuluz/fed-caid/releases/tag/datasets-v1.0.0). These files are not included in `git clone`. Raw datasets and generated caches remain excluded from Git; only this setup document is tracked under `dataset/`. You can also obtain the datasets manually from their official providers below.
-
-## Release bundle
-
-Download all files listed for each dataset into a `downloads/` directory at the repository root, together with `README_DATASETS.md`, `SHA256SUMS.txt` and `dataset_manifest.json`. Do not rename the parts. All parts of an archive must be in the same directory. The automatically generated `Source code` archives contain the software only; download the named dataset attachments for the data.
-
-| Dataset | Download files | Extract to |
-| --- | --- | --- |
-| Car-Hacking | `car-hacking.zip.001` and `.002` | `dataset/Car-Hacking Dataset/` |
-| CIC-IDS-2017 | `cic-ids-2017.zip.001` through `.003` | `dataset/` |
-| CIC-IoV-2024 | `cic-iov-2024.zip` | `dataset/` |
-| CIC-UNSW-NB15 | `cic-unsw-nb15.zip.001` through `.006` | `dataset/CIC-UNSW-NB15/` |
-
-Verify the downloaded files against `SHA256SUMS.txt`. On Windows, use `Get-FileHash -Algorithm SHA256 <file>`; on systems with `sha256sum`, run `sha256sum -c SHA256SUMS.txt` from the download directory. Stop if any hash differs.
-
-Use 7-Zip to open the first part of each split ZIP. With `7z` on PATH, run from the repository root:
-
-```text
-7z x downloads/car-hacking.zip.001 "-o./dataset/Car-Hacking Dataset"
-7z x downloads/cic-ids-2017.zip.001 -o./dataset
-7z x downloads/cic-iov-2024.zip -o./dataset
-7z x downloads/cic-unsw-nb15.zip.001 -o./dataset/CIC-UNSW-NB15
-```
-
-IDS and IoV already include their outer directory. Car-Hacking and NB15 contain CSVs at archive root, so extract them into the specific subdirectories above. The experiment inputs are byte identical to the validated local sources. Accompanying source files are preserved in the data bundle but are not used by the experiment.
+Obtain the four datasets from the official providers below and place the 19 required CSVs in the listed directories. The GitHub repository and its source archives contain the software and preparation recipes. The repository excludes raw datasets and generated caches.
 
 ## Official sources and expected layout
 
@@ -70,12 +46,36 @@ The program compares source byte counts and SHA256 hashes with `src/fedcaid_reso
 
 NB15 `CICFlowMeter.csv` is accepted as an alternative filename only when its bytes match the recorded `CICFlowMeter_out.csv` source. Original UNSW-NB15 tables and separate `Data.csv`/`Label.csv` are not interchangeable with this source. IoV binary/hexadecimal files, Car-Hacking `normal_run_data/` and other accompanying files are not required by the experiment.
 
-From the repository root, run:
+After installing the dependencies, open the repository root in PyCharm and run `main.py` with no arguments. From a terminal at the same location, start the full review workflow with:
 
 ```text
-python main.py
+python main.py --full-review
 ```
 
-On the first run, the reader uses these raw CSVs and the bundled row identities to recreate the fixed TRAIN, CAL and VAL roles. It writes `development.npz`, `preparation.json` and `selected_train_identities.npz` to `./data_cache/<dataset>/`, outside the raw dataset tree. Subsequent runs reuse complete verified caches while still checking the raw sources. The software performs no automatic downloads.
+The preparation code verifies the raw CSVs and uses the bundled row identities to reconstruct the original TRAIN, CAL and VAL roles. When needed, it creates `development.npz`, `preparation.json` and `selected_train_identities.npz` under `data_cache/<dataset>/`. The review workflow derives its grouped and retrospective evaluation roles from the verified sources and writes results under `outputs/fedcaid_review/`. The workflows and reports are described in the [project README](../README.md).
 
-Keep the 12 bundled recipe and row identity files unchanged. They are program resources and must remain in the source release. No generated cache or preparation metadata belongs under `dataset/`. Dataset redistribution and use remain subject to the providers' terms.
+Keep the 12 recipe and row identity files under `src/fedcaid_resources/preparation/` unchanged. Generated caches belong under `data_cache/`, and results under `outputs/`. Follow each provider's terms for dataset use and redistribution.
+
+## Historical dataset bundle
+
+The earlier [dataset release](https://gitee.com/liuluz/fed-caid/releases/tag/datasets-v1.0.0) documented the following split archives. If you already obtained this bundle under the providers' terms, keep the parts for each dataset together in a `downloads/` directory at the repository root. Use the accompanying `README_DATASETS.md`, `SHA256SUMS.txt` and `dataset_manifest.json` to identify and verify the files. Keep the original filenames.
+
+| Dataset | Download files | Extract to |
+| --- | --- | --- |
+| Car-Hacking | `car-hacking.zip.001` and `.002` | `dataset/Car-Hacking Dataset/` |
+| CIC-IDS-2017 | `cic-ids-2017.zip.001` through `.003` | `dataset/` |
+| CIC-IoV-2024 | `cic-iov-2024.zip` | `dataset/` |
+| CIC-UNSW-NB15 | `cic-unsw-nb15.zip.001` through `.006` | `dataset/CIC-UNSW-NB15/` |
+
+Verify the downloaded files against `SHA256SUMS.txt`. On Windows, use `Get-FileHash -Algorithm SHA256 <file>`; on systems with `sha256sum`, run `sha256sum -c SHA256SUMS.txt` from the download directory. Stop if any hash differs.
+
+Use 7-Zip to open the first part of each split ZIP. With `7z` on PATH, run from the repository root:
+
+```text
+7z x downloads/car-hacking.zip.001 "-o./dataset/Car-Hacking Dataset"
+7z x downloads/cic-ids-2017.zip.001 -o./dataset
+7z x downloads/cic-iov-2024.zip -o./dataset
+7z x downloads/cic-unsw-nb15.zip.001 -o./dataset/CIC-UNSW-NB15
+```
+
+The IDS and IoV archives already include their outer directory. Car-Hacking and NB15 contain CSVs at the archive root. Extract them into the matching subdirectories above and verify the result against the preparation recipes.
