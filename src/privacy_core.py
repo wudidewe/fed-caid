@@ -89,7 +89,16 @@ class ClassScoreAdapter(nn.Module):
 
 
 def fit_class_adapter(
-    initial, probabilities, labels, log_prior, epochs=10, lr=0.1, prior_strength=0.5, prox=1.0
+    initial,
+    probabilities,
+    labels,
+    log_prior,
+    epochs=10,
+    lr=0.1,
+    prior_strength=0.5,
+    prox=1.0,
+    *,
+    diagnostics=None,
 ):
     """Fit a local class correction; clip and securely share the update before release."""
     p = np.asarray(probabilities, dtype=np.float64)
@@ -125,16 +134,21 @@ def fit_class_adapter(
     prior_tensor = torch.as_tensor(prior)
     anchor = torch.as_tensor(initial)
     optimizer = torch.optim.SGD(adapter.parameters(), lr=lr)
-    for _ in range(epochs):
+    projection_steps = 0
+    for epoch in range(epochs):
         optimizer.zero_grad(set_to_none=True)
         logits = scores + adapter.basis @ adapter.theta + prior_strength * prior_tensor
-        loss = (
-            functional.cross_entropy(logits, target)
-            + prox / 2 * (adapter.theta - anchor).square().sum()
-        )
+        loss = functional.cross_entropy(logits, target) + prox / 2 * (adapter.theta - anchor).square().sum()
         if not torch.isfinite(loss):
             raise FloatingPointError("Nonfinite local class-calibration objective")
         loss.backward()
+        if diagnostics is not None and epoch == 0:
+            diagnostics["first_gradient_l2"] = float(torch.linalg.vector_norm(adapter.theta.grad))
         optimizer.step()
-        adapter.set_vector(adapter.get_vector())
+        proposal = adapter.get_vector()
+        if diagnostics is not None:
+            projection_steps += int(np.linalg.norm(proposal) > adapter.RADIUS)
+        adapter.set_vector(proposal)
+    if diagnostics is not None:
+        diagnostics["projection_steps"] = projection_steps
     return adapter.get_vector() - initial

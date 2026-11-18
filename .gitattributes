@@ -10,3 +10,21 @@
 
 # Preserve the frozen preparation metadata byte for byte.
 src/fedcaid_resources/preparation/** -text
+
+# Keep reviewed source hashes stable across Git checkouts.
+src/experiment_config.py -text !eol
+src/privacy_run.py -text !eol
+src/review_evidence.py -text !eol
+src/revision_adaptation.py -text !eol
+src/revision_benign_cal.py -text !eol
+src/revision_conditional.py -text !eol
+src/revision_controlled.py -text !eol
+src/revision_external.py -text !eol
+src/revision_next.py -text !eol
+src/revision_operating_selection.py -text !eol
+src/revision_protocol_validation.py -text !eol
+src/revision_run.py -text !eol
+src/revision_supplement.py -text !eol
+src/revision_targeted_subtypes.py -text !eol
+src/revision_v12.py -text !eol
+src/revision_v12_launch_plan.py -text !eol

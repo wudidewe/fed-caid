@@ -8,10 +8,10 @@ from __future__ import annotations
 import json
 import math
 import os
-from pathlib import Path
 import statistics
 import threading
 import time
+from pathlib import Path
 
 
 def observe_rounds(
@@ -30,8 +30,9 @@ def observe_rounds(
     Timings and resources must come from execution, not this replay.
     """
     import numpy as np
-    from privacy_core import ClassScoreAdapter, fit_class_adapter
-    from privacy_run import empirical_alarm_threshold, risk_metrics
+
+    from .privacy_core import ClassScoreAdapter, fit_class_adapter
+    from .privacy_run import empirical_alarm_threshold, risk_metrics
 
     nodes, snapshots = tuple(nodes), tuple(global_vectors)
     if not nodes or not snapshots:
@@ -50,9 +51,7 @@ def observe_rounds(
         if calibration is not None and not calibration.identity:
             raise ValueError("Subtype continuation needs a separately scoped observer")
     rounds = [entry.get("round") for entry in snapshots]
-    if any(type(index) is not int for index in rounds) or rounds != list(
-        range(1, len(snapshots) + 1)
-    ):
+    if any(type(index) is not int for index in rounds) or rounds != list(range(1, len(snapshots) + 1)):
         raise ValueError("Consecutive completed rounds starting at one required")
     if (
         not isinstance(dataset, str)
@@ -108,9 +107,7 @@ def observe_rounds(
             names,
             np.concatenate(threshold_rows),
         )
-        pooled["macro_recall"] = float(
-            statistics.mean(pooled["per_class"][name]["recall"] for name in names)
-        )
+        pooled["macro_recall"] = float(statistics.mean(pooled["per_class"][name]["recall"] for name in names))
         decision_seconds += time.perf_counter() - started
         actual = timings.get(snapshot["round"], {})
         for key in ("adapter_fit_seconds", "aggregation_seconds"):
@@ -119,18 +116,16 @@ def observe_rounds(
                 type(value) not in (float, int) or not math.isfinite(value) or value < 0
             ):
                 raise ValueError("Nonnegative finite actual round timings required")
-        result.append(
-            {
-                "round": snapshot["round"],
-                "global_adapter": global_vector.tolist(),
-                "metrics": pooled,
-                "adapter_fit_seconds": actual.get("adapter_fit_seconds"),
-                "aggregation_seconds": actual.get("aggregation_seconds"),
-                "cached_personalization_seconds": personalization_seconds,
-                "cached_val_decision_seconds": decision_seconds,
-                "resources": actual.get("resources"),
-            }
-        )
+        result.append({
+            "round": snapshot["round"],
+            "global_adapter": global_vector.tolist(),
+            "metrics": pooled,
+            "adapter_fit_seconds": actual.get("adapter_fit_seconds"),
+            "aggregation_seconds": actual.get("aggregation_seconds"),
+            "cached_personalization_seconds": personalization_seconds,
+            "cached_val_decision_seconds": decision_seconds,
+            "resources": actual.get("resources"),
+        })
     document = {
         "schema": "round_observability_v1",
         "dataset": dataset,
@@ -142,10 +137,18 @@ def observe_rounds(
         "client_count": len(nodes),
         "resources_summary": resources_summary,
         "scope": "PRIVATE fixed development VAL records repeated across rounds; not independent TEST",
-        "personalization": "each recorded global adapter plus the same CAL local fit and held-out benign threshold rule as final saved models",
+        "personalization": (
+            "each recorded global adapter plus the same CAL local fit and held-out benign threshold rule as"
+            " final saved models"
+        ),
         "detector_training": "once before federation; not repeated or attributed to each round",
-        "inference": "cached base CAL/VAL probabilities; observer timings are not backbone prediction timings",
-        "timing_scope": "adapter_fit_seconds and aggregation_seconds measured during actual execution; cached personalization/VAL times are post-protocol replay, exclude detector inference",
+        "inference": (
+            "cached base CAL/VAL probabilities; observer timings are not backbone prediction timings"
+        ),
+        "timing_scope": (
+            "adapter_fit_seconds and aggregation_seconds measured during actual execution; cached"
+            " personalization/VAL times are post-protocol replay, exclude detector inference"
+        ),
         "raw_data_or_full_models_uploaded": False,
         "test_opened": False,
         "rounds": result,
@@ -211,9 +214,7 @@ class ResourceSampler:
             raise ValueError("Resource sampler can only be started once")
         self._started = time.perf_counter()
         self._sample()
-        self._thread = threading.Thread(
-            target=self._run, name="private-resource-sampler", daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, name="private-resource-sampler", daemon=True)
         self._thread.start()
         return self
 
@@ -242,33 +243,33 @@ class ResourceSampler:
         with self._lock:
             start = 0 if start is None else start
             stop = len(self._samples) - 1 if stop is None else stop
-            if (
-                type(start) is not int
-                or type(stop) is not int
-                or not 0 <= start <= stop < len(self._samples)
-            ):
+            if type(start) is not int or type(stop) is not int or not 0 <= start <= stop < len(self._samples):
                 raise ValueError("Valid resource interval tokens required")
             frames = self._samples[start : stop + 1]
         elapsed = frames[-1]["wall_seconds"] - frames[0]["wall_seconds"]
         parent_cpu = frames[-1]["parent_cpu_seconds"] - frames[0]["parent_cpu_seconds"]
-        rss = [
-            frame["parent_rss_bytes"] for frame in frames if frame["parent_rss_bytes"] is not None
-        ]
+        rss = [frame["parent_rss_bytes"] for frame in frames if frame["parent_rss_bytes"] is not None]
         result = {
             "elapsed_seconds": elapsed,
             "sample_count": len(frames),
             "sampling_interval_seconds": self.interval,
             "optional_psutil_available": self._psutil,
-            "scope": "actual execution; main simulator process including threads; collector subprocesses and GPU excluded",
+            "scope": (
+                "actual execution; main simulator process including threads; collector subprocesses and GPU"
+                " excluded"
+            ),
             "cpu_seconds": parent_cpu,
             "cpu_percent_mean": 100 * parent_cpu / elapsed if elapsed > 0 else None,
             "ram_peak_mib": max(rss) / (1024**2) if rss else None,
             "process_scope": "main simulator process including threads; collector subprocesses excluded",
-            "cpu_percent_scope": "100% is one fully used logical CPU; may exceed 100%; not normalized by host CPU count",
-            "memory_scope": "sampled main-process RSS peak MiB; excludes child processes and GPU memory; not exact lifetime peak or host utilization",
-            "unreadable_process_samples": sum(
-                frame["unreadable_process_count"] for frame in frames
+            "cpu_percent_scope": (
+                "100% is one fully used logical CPU; may exceed 100%; not normalized by host CPU count"
             ),
+            "memory_scope": (
+                "sampled main-process RSS peak MiB; excludes child processes and GPU memory; not exact"
+                " lifetime peak or host utilization"
+            ),
+            "unreadable_process_samples": sum(frame["unreadable_process_count"] for frame in frames),
         }
         return result
 

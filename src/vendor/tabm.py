@@ -10,12 +10,13 @@ import warnings
 from dataclasses import dataclass
 from typing import Any, Literal, Optional, TypedDict, Union
 
-import rtdl_num_embeddings
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn.parameter import Parameter
 from typing_extensions import Unpack
+
+from . import rtdl_num_embeddings
 
 # ======================================================================================
 # Utilities

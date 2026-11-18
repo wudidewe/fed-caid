@@ -15,11 +15,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-import ids_core as core
-from aggregation_audit import AggregationAudit
-from privacy_core import ClassScoreAdapter, digest
-from secure_aggregation import SecureAggregationSession
-from validation_core import privacy_scope_validation
+from . import utils as core
+from .aggregation_audit import AggregationAudit
+from .privacy_core import ClassScoreAdapter, digest
+from .secure_aggregation import SecureAggregationSession
+from .validation_core import privacy_scope_validation
 
 
 def _write_csv(path, rows):
@@ -40,26 +40,20 @@ def _model_hash(model):
 
 def _benchmark_inference(node, raw, device, batch_size):
     """Warm resident model; measure transform through final decision, locally."""
-    from privacy_run import hierarchical_decisions
+    from .privacy_run import hierarchical_decisions
 
     model = node.model.to(device)
     correction = ClassScoreAdapter(len(node.names))
     correction.set_vector(node.final_local_vector)
 
     def infer(values):
-        p = core.probabilities(
-            core.log_prediction(model, node.transform(values), device, batch_size)
-        )
+        p = core.probabilities(core.log_prediction(model, node.transform(values), device, batch_size))
         p = correction.transform(p)
         calibration = getattr(node, "attack_subtype_calibration", None)
-        scores = (
-            calibration.scores(p) if calibration is not None and not calibration.identity else None
-        )
-        from privacy_run import subtype_joint_probabilities
+        scores = calibration.scores(p) if calibration is not None and not calibration.identity else None
+        from .privacy_run import subtype_joint_probabilities
 
-        return subtype_joint_probabilities(p, scores), hierarchical_decisions(
-            p, node.alarm_threshold, scores
-        )
+        return subtype_joint_probabilities(p, scores), hierarchical_decisions(p, node.alarm_threshold, scores)
 
     def timed(values):
         if device == "cuda":
@@ -84,7 +78,11 @@ def _benchmark_inference(node, raw, device, batch_size):
     request_ms = [timed(raw[:1])[0] for _ in range(20)]
     node.model = model.cpu()
     return {
-        "scope": "private local resident inference: transform+backbone+adapter+optional subtype scores and reporting joint probabilities+hierarchical_decision; excludes checkpoint loading, startup, network, audit",
+        "scope": (
+            "private local resident inference: transform+backbone+adapter+optional subtype scores and"
+            " reporting joint probabilities+hierarchical_decision; excludes checkpoint loading, startup,"
+            " network, audit"
+        ),
         "device": device,
         "batch_size": batch_size,
         "validation_rows": len(raw),
@@ -103,12 +101,11 @@ def _benchmark_inference(node, raw, device, batch_size):
 
 def execute_secure(args):
     # Import lazily to keep one shared detector/data/decision implementation.
-    from privacy_run import (
-        ROOT,
+    from .privacy_run import (
         DATASETS,
+        ROOT,
         PrivateClient,
         client_partitions,
-        load_development,
         risk_metrics,
         synthetic_data,
     )
@@ -132,20 +129,18 @@ def execute_secure(args):
         args.out = str(ROOT / "outputs" / f"secure_{stamp}_{uuid.uuid4().hex[:6]}")
     root = Path(args.out).resolve()
     if root.exists():
-        raise ValueError(
-            "Use a NEW --out; existing experiments are never overwritten or auto-resumed"
-        )
+        raise ValueError("Use a NEW --out; existing experiments are never overwritten or auto-resumed")
     root.mkdir(parents=True)
     public, private = root / "public", root / "private_DO_NOT_UPLOAD"
     public.mkdir()
     private.mkdir()
     session = uuid.uuid4().hex
-    from main import (
-        selected_datasets,
-        resolve_dataset_parameters,
-        numerical_parameters,
+    from .experiment_config import (
         load_local_for_dataset,
         non_numerical_option,
+        numerical_parameters,
+        resolve_dataset_parameters,
+        selected_datasets,
     )
 
     selected = selected_datasets(args)
@@ -173,7 +168,9 @@ def execute_secure(args):
             "session": session,
             "settings": settings,
             "framework_version": 3,
-            "shared_algorithm": "prior_adjusted_PLE_TabM_class_score_secure_sum_personalization_hierarchical_alert",
+            "shared_algorithm": (
+                "prior_adjusted_PLE_TabM_class_score_secure_sum_personalization_hierarchical_alert"
+            ),
             "dataset_parameters": {name: numerical_parameters(args, name) for name in selected},
             "datasets": list(selected),
             "adapter_dimension_rule": "public_class_count_minus_one",
@@ -182,9 +179,17 @@ def execute_secure(args):
             "epsilon": None,
             "delta": None,
             "test_opened": False,
-            "privacy_scope": "individual shares hidden from each separate honest-but-curious noncolluding collector; aggregate is revealed",
-            "trust_assumption": "two collectors do not collude; trusted local simulation orchestrator; honest client clipping",
-            "deployment": "two subprocess collectors on one trusted host; no TLS, host-admin isolation or distributed deployment",
+            "privacy_scope": (
+                "individual shares hidden from each separate honest-but-curious noncolluding collector;"
+                " aggregate is revealed"
+            ),
+            "trust_assumption": (
+                "two collectors do not collude; trusted local simulation orchestrator; honest client clipping"
+            ),
+            "deployment": (
+                "two subprocess collectors on one trusted host; no TLS, host-admin isolation or distributed"
+                " deployment"
+            ),
             "audit": "local hash-chain audit; no signatures, consensus or blockchain deployment",
             "historical_dp_ledgers_modified": False,
             "combined_transcript_has_dp_guarantee": False,
@@ -192,14 +197,13 @@ def execute_secure(args):
             "private_diagnostics_are_dp": False,
         },
     )
-    from _iov_layout import source_path, SNAPSHOT_SUPPORT_FILES
+    from ._iov_layout import SNAPSHOT_SUPPORT_FILES, source_path
 
     snapshot = root / "execution_source"
     snapshot.mkdir()
     files = (
-        "main.py",
+        "experiment_config.py",
         "data_io.py",
-        "ids_core.py",
         "privacy_core.py",
         "privacy_run.py",
         "secure_run.py",
@@ -231,16 +235,14 @@ def execute_secure(args):
     for name in selected:
         args = resolve_dataset_parameters(shared_args, name)
         dataset_started = time.perf_counter()
-        from round_observability import ResourceSampler, observe_rounds
+        from .round_observability import ResourceSampler, observe_rounds
 
         sampler = ResourceSampler().start() if getattr(args, "_observe_rounds", False) else None
         try:
             clients = [f"client_{i}" for i in range(args.clients)]
             load_started = time.perf_counter()
             parts, names, features = (
-                synthetic_data(DATASETS.index(name))
-                if args.smoke
-                else load_local_for_dataset(args, name)
+                synthetic_data(DATASETS.index(name)) if args.smoke else load_local_for_dataset(args, name)
             )
             partitions = client_partitions(
                 parts,
@@ -255,12 +257,11 @@ def execute_secure(args):
             nodes = []
             for client, rows in zip(clients, partitions):
                 print(
-                    f"LOCAL FIT {name}/{client}: training_seed={args.training_seed}; starting private detector training",
+                    f"LOCAL FIT {name}/{client}: training_seed={args.training_seed}; starting private"
+                    " detector training",
                     flush=True,
                 )
-                node = PrivateClient(
-                    client, parts, rows, names, features, args, private / name / client
-                )
+                node = PrivateClient(client, parts, rows, names, features, args, private / name / client)
                 node.framework_version, node.mechanism = 3, "mpc"
                 # Cache private probabilities to avoid repeated backbone inference.
                 np.savez_compressed(
@@ -287,9 +288,8 @@ def execute_secure(args):
                             k: core.sha(snapshot / k)
                             for k in (
                                 "utils.py",
-                                "ids_core.py",
                                 "privacy_run.py",
-                                "main.py",
+                                "experiment_config.py",
                                 "dataset_access.py",
                             )
                         },
@@ -364,20 +364,16 @@ def execute_secure(args):
                     )
                     serialization_seconds += time.perf_counter() - serialization_started
                     rounds.append(receipt)
-                    global_snapshots.append(
-                        {"round": round_index, "adapter": global_vector.copy().tolist()}
-                    )
-                    round_timings.append(
-                        {
-                            "round": round_index,
-                            "adapter_fit_seconds": sum(
-                                n.performance.get("adapter_training_seconds", 0.0) for n in nodes
-                            )
-                            - fit_seconds_before,
-                            "aggregation_seconds": aggregation_seconds - aggregation_before,
-                            "resources": sampler.end_interval(resource_token) if sampler else None,
-                        }
-                    )
+                    global_snapshots.append({"round": round_index, "adapter": global_vector.copy().tolist()})
+                    round_timings.append({
+                        "round": round_index,
+                        "adapter_fit_seconds": (
+                            sum(n.performance.get("adapter_training_seconds", 0.0) for n in nodes)
+                            - fit_seconds_before
+                        ),
+                        "aggregation_seconds": aggregation_seconds - aggregation_before,
+                        "resources": sampler.end_interval(resource_token) if sampler else None,
+                    })
             diagnostics = [
                 {
                     "client": node.client_id,
@@ -404,9 +400,7 @@ def execute_secure(args):
             numeric_upload = 2 * args.rounds * args.clients * dimension * 8
             numeric_aggregate = 2 * args.rounds * dimension * 8
             numeric_download = args.rounds * args.clients * dimension * 8
-            public_json = (
-                sum(p.stat().st_size for p in data_public.glob("r*_aggregate.json")) * args.clients
-            )
+            public_json = sum(p.stat().st_size for p in data_public.glob("r*_aggregate.json")) * args.clients
             privacy_metrics = {
                 "mechanism": "two_server_additive_secure_sum",
                 "privacy_guarantee": "secure_sum_no_DP",
@@ -426,7 +420,10 @@ def execute_secure(args):
                 "numeric_adapter_download_bytes": numeric_download,
                 "numeric_payload_bytes": numeric_upload + numeric_aggregate + numeric_download,
                 "aggregate_json_logical_download_bytes": public_json,
-                "byte_scope": "numeric int64 shares and float64 adapters; aggregate JSON downloads counted separately; no TCP/TLS/consensus claim",
+                "byte_scope": (
+                    "numeric int64 shares and float64 adapters; aggregate JSON downloads counted separately;"
+                    " no TCP/TLS/consensus claim"
+                ),
                 "completed_rounds": args.rounds,
                 "accepted_updates": sum(r["accepted_update"] for r in rounds),
                 "federated_adaptation_applied": any(r["accepted_update"] for r in rounds),
@@ -454,7 +451,9 @@ def execute_secure(args):
                 "model_checkpoint_bytes": sum(
                     (n.directory / "detector_private.pt").stat().st_size for n in nodes
                 ),
-                "timing_scope": "trusted local simulator; excludes production network and blockchain consensus",
+                "timing_scope": (
+                    "trusted local simulator; excludes production network and blockchain consensus"
+                ),
             }
             performance["secure_processing_seconds"] = (
                 process_startup_seconds
@@ -467,9 +466,9 @@ def execute_secure(args):
                 "subtotal; excludes round-begin IPC, worker shutdown, local adapter fitting "
                 "and result-file serialization"
             )
-            performance["secure_processing_fraction"] = performance[
-                "secure_processing_seconds"
-            ] / max(performance["total_experiment_seconds"], 1e-12)
+            performance["secure_processing_fraction"] = performance["secure_processing_seconds"] / max(
+                performance["total_experiment_seconds"], 1e-12
+            )
             core.save_json(private / name / "performance_private.json", performance)
             if sampler:
                 resources = sampler.stop()
@@ -484,47 +483,41 @@ def execute_secure(args):
                     original_round_timings=round_timings,
                     resources_summary=resources,
                 )
-            validation_rows.append(
-                {
-                    "dataset": name,
-                    **{
-                        k: pooled[k]
-                        for k in (
-                            "accuracy",
-                            "weighted_f1",
-                            "macro_f1",
-                            "far",
-                            "fnr",
-                            "argmax_accuracy",
-                            "argmax_weighted_f1",
-                            "argmax_macro_f1",
-                            "binary_brier",
-                            "binary_ece_10",
-                            "binary_nll",
-                        )
-                    },
-                    "total_experiment_seconds": performance["total_experiment_seconds"],
-                    "secure_processing_seconds": performance["secure_processing_seconds"],
-                }
-            )
+            validation_rows.append({
+                "dataset": name,
+                **{
+                    k: pooled[k]
+                    for k in (
+                        "accuracy",
+                        "weighted_f1",
+                        "macro_f1",
+                        "far",
+                        "fnr",
+                        "argmax_accuracy",
+                        "argmax_weighted_f1",
+                        "argmax_macro_f1",
+                        "binary_brier",
+                        "binary_ece_10",
+                        "binary_nll",
+                    )
+                },
+                "total_experiment_seconds": performance["total_experiment_seconds"],
+                "secure_processing_seconds": performance["secure_processing_seconds"],
+            })
             _write_csv(private / "detection_metrics_private.csv", validation_rows)
-            report.append(
-                {
-                    "dataset": name,
-                    "domain": (
-                        "in_vehicle_CAN" if name in DATASETS[:2] else "external_network_proxy"
-                    ),
-                    "mechanism": "mpc",
-                    "framework_version": 3,
-                    "clients": args.clients,
-                    "adapter_dimension": dimension,
-                    "completed_rounds": args.rounds,
-                    "privacy_metrics": privacy_metrics,
-                    "rounds": rounds,
-                    "audit": audit.verify(),
-                    "synthetic": args.smoke,
-                }
-            )
+            report.append({
+                "dataset": name,
+                "domain": "in_vehicle_CAN" if name in DATASETS[:2] else "external_network_proxy",
+                "mechanism": "mpc",
+                "framework_version": 3,
+                "clients": args.clients,
+                "adapter_dimension": dimension,
+                "completed_rounds": args.rounds,
+                "privacy_metrics": privacy_metrics,
+                "rounds": rounds,
+                "audit": audit.verify(),
+                "synthetic": args.smoke,
+            })
             core.save_json(public / "summary.json", report)
             _write_csv(
                 public / "privacy_metrics.csv",
@@ -532,7 +525,7 @@ def execute_secure(args):
             )
             print(
                 f"SECURE FEDERATION {name}: {args.rounds} complete-roster rounds; "
-                f'nonzero_update_rounds={privacy_metrics["accepted_updates"]}; '
+                f"nonzero_update_rounds={privacy_metrics['accepted_updates']}; "
                 "MPC confidentiality, no DP epsilon",
                 flush=True,
             )

@@ -1,0 +1,30 @@
+{
+  "revision_class_operating.py": {
+    "original_sha256": "94adf52de013a01e9b3e7ef1b5dc4f96e3e3f8b752faa641bf39c37db2cfff76",
+    "packaged_sha256": "f6d330e30968acd2d8c3b6c25055080d0f031a7e985d8eda5294a65c6e90a902"
+  },
+  "revision_fixed_subtype.py": {
+    "original_sha256": "0651a4464ea98128415060804e47e23ee4e4323d63cfc53c435061eaf9d6b686",
+    "packaged_sha256": "f43077b28d2e6220f4448ea7ccd56da6d2658ccf2652f0205dc386b2c244dbab"
+  },
+  "revision_shared_head.py": {
+    "original_sha256": "59b9a69d3faa7fbdea21875ab706ccb64c2c3c2432019148c3fc2b88f646adb9",
+    "packaged_sha256": "ec7940d96c3d26bb9ee602fdb0cc7bc565505f14f02d4d9a43649846a4677d39"
+  },
+  "revision_subtype_guard.py": {
+    "original_sha256": "79c0f6e98410e12db9904d798b5c3999179d424fdad74243288b903e3a1e8da8",
+    "packaged_sha256": "25b264bcd64e55fee70a37bc12bb8bcb63f9db77f256f83b7e5f4add914b4dc2"
+  },
+  "revision_tabm_checkpoint.py": {
+    "original_sha256": "7af09e81f5188c255a7eebbcc96baecf9084759901fb519ece27c3162c5cd3a1",
+    "packaged_sha256": "ae117d9b3355acbb70401a0c4021f87e4c16d247272e56d285db9e328fb69d1d"
+  },
+  "utils.py": {
+    "original_sha256": "33f134d30f629297bbdbb295d56f6895591fa94164d475446218cc561238c7f1",
+    "packaged_sha256": "0d36e404941aa876bf9d01c65ca75bfb6016200483a024b37cee557651bc17a0"
+  },
+  "vendor/tabm.py": {
+    "original_sha256": "fc654af6a16bac53d893a8265c79d7af4ebddcb95ad0d600cc6b6bc6b7317ade",
+    "packaged_sha256": "5c49b08847961c6110c9d7c5dda2a017de6431e3502840ebb910feca1e3fd2f8"
+  }
+}

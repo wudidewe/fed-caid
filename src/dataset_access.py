@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import json
+from pathlib import Path
 
 import numpy as np
 
-from _iov_layout import project_root
-
+from ._iov_layout import project_root
 
 # Ordered feature/class signatures distinguish the two 68-feature datasets.
 DATASET_PROFILES = {
@@ -262,13 +261,10 @@ def identify_dataset(path, expected="auto"):
     ]
     if len(matches) != 1:
         raise ValueError(
-            "Dataset requires one exact ordered feature/class signature match; got "
-            + str(len(matches))
+            "Dataset requires one exact ordered feature/class signature match; got " + str(len(matches))
         )
     if expected != "auto" and matches[0] != expected:
-        raise ValueError(
-            "Declared dataset conflicts with archive content: " + expected + " != " + matches[0]
-        )
+        raise ValueError("Declared dataset conflicts with archive content: " + expected + " != " + matches[0])
     return matches[0]
 
 
@@ -276,7 +272,7 @@ def read_local_dataset(path, dataset="auto"):
     """Load frozen TRAIN/CAL/VAL with cache and TRAIN identity hash checks."""
     identify_dataset(path, expected=dataset)
     # Import the shared loader lazily to avoid circular imports.
-    from utils import load_development
+    from .utils import load_development
 
     return load_development(Path(path))
 
@@ -285,7 +281,7 @@ def check_dataset_source(dataset, dataset_dir=None):
     """Check manually installed raw files without creating files or using the network."""
     name = _canonical_name(dataset)
     root = Path(dataset_dir) if dataset_dir is not None else project_root(__file__) / "dataset"
-    from dataset_preparation import check_raw_sources
+    from .dataset_preparation import check_raw_sources
 
     return check_raw_sources(name, root)
 
@@ -293,10 +289,8 @@ def check_dataset_source(dataset, dataset_dir=None):
 def read_dataset_directory(dataset, dataset_dir=None, cache_dir=None):
     """Read fixed local CSV directories and reuse a separate verified cache."""
     name = _canonical_name(dataset)
-    root = (
-        Path(dataset_dir) if dataset_dir is not None else project_root(__file__) / "dataset"
-    ).resolve()
-    from dataset_preparation import DEFAULT_CACHE, prepare_dataset
+    root = (Path(dataset_dir) if dataset_dir is not None else project_root(__file__) / "dataset").resolve()
+    from .dataset_preparation import DEFAULT_CACHE, prepare_dataset
 
     spec = check_dataset_source(name, root)
     cache = Path(cache_dir).resolve() if cache_dir is not None else DEFAULT_CACHE

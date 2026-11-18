@@ -2,12 +2,21 @@
 /dataset/*
 !/dataset/README.md
 /downloads/
+/external/*
+!/external/hulk_manifest.example.json
+!/external/lan_manifest.example.json
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
 
 # Generated data, private experiment outputs and fitted models.
 /data/
 /data_cache/
 /outputs/
 **/private_DO_NOT_UPLOAD/
+**/adapter_diagnostics_private.json
 **/simulation_ledgers/
 **/privacy_budget_ledgers*/
 *.npz
@@ -29,14 +38,16 @@ __pycache__/
 *.egg-info/
 /build/
 /dist/
+/wheelhouse/
+/installed_wheel_check.json
 /.venv/
 /venv/
 /.idea/
+/.run/*
+!/.run/FedCAID.run.xml
 /.vscode/
 /.pytest_cache/
-/tests/
 /examples/
-/docs/
 /tmp/
 /run_main.local.cmd
 .env

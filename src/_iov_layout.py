@@ -4,19 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 SNAPSHOT_SUPPORT_FILES = (
+    "__init__.py",
     "_iov_layout.py",
     "utils.py",
     "dataset_access.py",
     "dataset_preparation.py",
     "round_observability.py",
-    "experiment_report.py",
-    "experiment_report_data.py",
-    "report_timeseries.py",
-    "main.py",
+    "experiment_config.py",
     "data_io.py",
-    "ids_core.py",
     "privacy_core.py",
     "privacy_run.py",
     "secure_run.py",
@@ -25,10 +21,13 @@ SNAPSHOT_SUPPORT_FILES = (
     "validation_core.py",
     "vendor/tabm.py",
     "vendor/rtdl_num_embeddings.py",
+    "vendor/__init__.py",
     "vendor/TABM_LICENSE.txt",
     "vendor/RTDL_LICENSE.txt",
     "vendor/NOTICE.md",
     "fedcaid_resources/__init__.py",
+    "fedcaid_resources/frozen_format_compatibility.json",
+    "fedcaid_resources/package_import_compatibility.json",
     "fedcaid_resources/preparation/CIC-IoV-2024/recipe.json",
     "fedcaid_resources/preparation/CIC-IoV-2024/heldout_identities.csv",
     "fedcaid_resources/preparation/CIC-IoV-2024/excluded_identities.csv",
@@ -49,7 +48,8 @@ def project_root(module_file):
     directory = Path(module_file).resolve().parent
     if directory.name == "src" and (directory.parent / "main.py").is_file():
         return directory.parent
-    if directory.name in {"site-packages", "dist-packages"}:
+    package_container = directory.parent if directory.name == "src" else directory
+    if package_container.name in {"site-packages", "dist-packages"}:
         return Path.cwd().resolve()
     return directory
 

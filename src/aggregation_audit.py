@@ -6,8 +6,8 @@ import json
 import os
 from pathlib import Path
 
-from privacy_core import canonical, digest, vector
-from secure_aggregation import PRIME, SCHEMA
+from .privacy_core import canonical, digest, vector
+from .secure_aggregation import PRIME, SCHEMA
 
 
 class AggregationAudit:
@@ -48,8 +48,7 @@ class AggregationAudit:
                     set(block) != {"index", "previous", "event", "hash"}
                     or block["index"] != i
                     or block["previous"] != head
-                    or digest({k: block[k] for k in ("index", "previous", "event")})
-                    != block["hash"]
+                    or digest({k: block[k] for k in ("index", "previous", "event")}) != block["hash"]
                 ):
                     raise ValueError("MPC audit hash chain changed")
                 event = block["event"]
@@ -173,9 +172,7 @@ class AggregationAudit:
             or data["parent_model"] != state["last_model"]
         ):
             raise ValueError("Changed or replayed MPC contract")
-        self._append(
-            {"kind": "begin", "contract_hash": key, "contract": data}, self.head, self.size
-        )
+        self._append({"kind": "begin", "contract_hash": key, "contract": data}, self.head, self.size)
         self.verify()
 
     def commit(self, contract, model, receipt):

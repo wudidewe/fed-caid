@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "Please cite FedCAID and identify the exact release or source commit used. A permanent archive identifier has not yet been assigned here."
+title: "FedCAID"
+type: software
+authors:
+  - family-names: "liulu"
+repository-code: "https://github.com/wudidewe/fed-caid"
+license: Apache-2.0
+abstract: "Research software for reproducible intrusion-detection experiments, matched local and federated score adaptation, and explicitly scoped additive-sharing protocol validation."

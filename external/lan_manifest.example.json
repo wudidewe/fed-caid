@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "topology": "Replace with the actual switch or Wi-Fi link and measured network conditions",
+  "orchestrator": {"physical_host_id": "replace-orchestrator", "os": "replace", "cpu": "replace", "ram": "replace"},
+  "collector_a": {"physical_host_id": "replace-collector-a", "os": "replace", "cpu": "replace", "ram": "replace", "endpoint": "192.168.1.21:8761"},
+  "collector_b": {"physical_host_id": "replace-collector-b", "os": "replace", "cpu": "replace", "ram": "replace", "endpoint": "192.168.1.22:8762"}
+}

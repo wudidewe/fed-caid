@@ -30,9 +30,7 @@ def apply_recipes(x, features, recipes):
         values = x[:, [features.index(n) for n in recipe["columns"]]].astype(float)
         valid = np.isfinite(values).all(1) & (values >= 0).all(1)
         if recipe["operation"] != "balance":
-            raise ValueError(
-                "Only the frozen network balance recipes are needed in this clean route"
-            )
+            raise ValueError("Only the frozen network balance recipes are needed in this clean route")
         with np.errstate(all="ignore"):
             result = (values[:, 0] - values[:, 1]) / (values.sum(1) + 1.0)
         output.append(np.where(valid & np.isfinite(result), result, np.nan).astype(np.float32))
@@ -73,9 +71,7 @@ def car_chunk(frame, source_name, with_features):
         raise ValueError("Invalid CAN timestamp")
     x = np.zeros((len(frame), 10), np.float32)
     x[:, 1] = dlc
-    for column, destination, maximum in [(1, 0, 0x1FFFFFFF)] + [
-        (3 + j, 2 + j, 255) for j in range(8)
-    ]:
+    for column, destination, maximum in [(1, 0, 0x1FFFFFFF)] + [(3 + j, 2 + j, 255) for j in range(8)]:
         observed = np.ones(len(frame), bool) if column == 1 else dlc > column - 3
         text = frame.loc[observed, column].astype(str).str.strip()
         if not text.str.fullmatch(r"[0-9A-Fa-f]+").all():
@@ -104,9 +100,7 @@ def stream_source(spec, with_features, chunk_size):
                 chunksize=chunk_size,
             )
         else:
-            header = pd.read_csv(
-                path, nrows=0, encoding=spec["encoding"], encoding_errors="replace"
-            ).columns
+            header = pd.read_csv(path, nrows=0, encoding=spec["encoding"], encoding_errors="replace").columns
             mapping = {str(c).strip(): c for c in header}
             if len(mapping) != len(header):
                 raise ValueError("Ambiguous source columns")
@@ -136,11 +130,7 @@ def stream_source(spec, with_features, chunk_size):
                     x = None
                     if with_features:
                         with np.errstate(over="ignore", invalid="ignore"):
-                            raw = (
-                                frame[originals]
-                                .apply(pd.to_numeric, errors="coerce")
-                                .to_numpy(np.float32)
-                            )
+                            raw = frame[originals].apply(pd.to_numeric, errors="coerce").to_numpy(np.float32)
                         raw[~np.isfinite(raw)] = np.nan
                         raw[raw == 0] = 0.0
                         if pipeline:

@@ -26,16 +26,14 @@ def privacy_scope_validation(public, mode="mpc"):
         "partition_indices_sha256",
         "backbone_state_sha256",
     }
-    forbidden.update(
-        {
-            "attack_subtype_calibration",
-            "subtype_bias",
-            "train_probabilities",
-            "train_labels",
-            "attack_class_counts",
-            "train_prediction_cache",
-        }
-    )
+    forbidden.update({
+        "attack_subtype_calibration",
+        "subtype_bias",
+        "train_probabilities",
+        "train_labels",
+        "attack_class_counts",
+        "train_prediction_cache",
+    })
     violations = []
 
     def walk(value, path):
@@ -70,7 +68,9 @@ def privacy_scope_validation(public, mode="mpc"):
     return {
         "public_individual_artifact_scan": "pass",
         "violations": [],
-        "secure_share_construction": "conditional mathematical construction; protocol test evidence reported separately",
+        "secure_share_construction": (
+            "conditional mathematical construction; protocol test evidence reported separately"
+        ),
         "differential_privacy": False if mode == "mpc" else "separate accountant required",
         "member_inference_resistance": "not_established",
         "collector_noncollusion": "assumed_not_verified",

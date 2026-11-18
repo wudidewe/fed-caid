@@ -4,17 +4,16 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path, PurePosixPath, PureWindowsPath
 import stat
 import tempfile
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import numpy as np
 import pandas as pd
 
-from data_io import stream_source
-from ids_core import save_json, sha
-from _iov_layout import project_root
-
+from ._iov_layout import project_root
+from .data_io import stream_source
+from .utils import save_json, sha
 
 _PREPARED_FILES = ("development.npz", "selected_train_identities.npz", "preparation.json")
 PREPARATION_ROOT = Path(__file__).resolve().parent / "fedcaid_resources" / "preparation"
@@ -29,7 +28,7 @@ RAW_DIRECTORIES = {
 
 def recipe_path(dataset, dataset_root=None):
     """Read the bundled role recipe, independently of the raw data directory."""
-    from dataset_access import DATASET_PROFILES
+    from .dataset_access import DATASET_PROFILES
 
     if dataset not in DATASET_PROFILES:
         raise ValueError("Unknown dataset identifier: " + str(dataset))
@@ -108,7 +107,7 @@ def _source_aliases(source):
     return result
 
 
-def locate_raw_sources(recipe, dataset_root):
+def locate_raw_sources(recipe, dataset_root, *, verify=True):
     """Read CSVs only from this dataset's fixed local directory."""
     root = Path(dataset_root).resolve()
     default_directory = resolve_raw_directory(recipe, root)
@@ -128,15 +127,22 @@ def locate_raw_sources(recipe, dataset_root):
             {path for name in names for path in candidates[name]},
             key=lambda path: (path.relative_to(root).as_posix().casefold(), str(path)),
         )
-        for path in matches:
-            _verify_raw({**source, "path": path})
+        if verify:
+            for path in matches:
+                _verify_raw({**source, "path": path})
         path = matches[0] if matches else default_directory / source["filename"]
         resolved.append({**source, "path": checked_source_path(root, path)})
     return resolved
 
 
-def _recipe(dataset, dataset_root):
-    from dataset_access import DATASET_PROFILES
+def raw_source_paths(dataset, dataset_root):
+    """List expected local inputs without hashing the raw CSVs."""
+    recipe = _recipe(dataset, dataset_root, verify_raw=False)
+    return tuple(source["path"] for source in recipe["source_files"])
+
+
+def _recipe(dataset, dataset_root, *, verify_raw=True):
+    from .dataset_access import DATASET_PROFILES
 
     root = Path(dataset_root)
     path = checked_source_path(PREPARATION_ROOT, recipe_path(dataset))
@@ -182,7 +188,7 @@ def _recipe(dataset, dataset_root):
     if not sources or len({s["filename"] for s in sources}) != len(sources):
         raise ValueError("Preparation recipe needs distinct ordered source files")
     spec["source_files"] = sources
-    spec["source_files"] = locate_raw_sources(spec, root)
+    spec["source_files"] = locate_raw_sources(spec, root, verify=verify_raw)
     spec["recipe_sha256"] = sha(path)
     return spec
 
@@ -190,9 +196,7 @@ def _recipe(dataset, dataset_root):
 def check_raw_sources(dataset, dataset_root):
     """Report missing local CSV files and their official manual download address."""
     spec = _recipe(dataset, dataset_root)
-    missing = [
-        source["filename"] for source in spec["source_files"] if not source["path"].is_file()
-    ]
+    missing = [source["filename"] for source in spec["source_files"] if not source["path"].is_file()]
     if missing:
         raise FileNotFoundError(
             f"{dataset}: missing local CSV files: {', '.join(missing)}. "
@@ -207,9 +211,7 @@ def _verify_raw(source):
     if not path.is_file() or path.is_symlink():
         raise ValueError("Raw CSV version differs from the published SHA256: " + source["filename"])
     if path.stat().st_size != source["bytes"]:
-        raise ValueError(
-            "Raw CSV byte count differs from the frozen experiment: " + source["filename"]
-        )
+        raise ValueError("Raw CSV byte count differs from the frozen experiment: " + source["filename"])
     if sha(path) != source["sha256"]:
         raise ValueError("Raw CSV SHA256 differs from the frozen experiment: " + source["filename"])
 
@@ -240,9 +242,7 @@ def _install_prepared(staged, output, root):
     if not output.is_dir():
         raise ValueError("Prepared dataset location must be a regular directory")
     if any((output / name).exists() or (output / name).is_symlink() for name in _PREPARED_FILES):
-        raise FileExistsError(
-            "Prepared files appeared during preparation; existing files preserved"
-        )
+        raise FileExistsError("Prepared files appeared during preparation; existing files preserved")
     installed = []
     try:
         # Exclusive links install complete files atomically without replacing raw data.
@@ -268,15 +268,10 @@ def prepare_dataset(dataset, dataset_root, *, cache_root=None, chunk_size=250000
         checked_source_path(cache_root, output)
         if not output.is_dir():
             raise ValueError("Prepared dataset location must be a regular directory")
-        if any(
-            (output / name).exists() or (output / name).is_symlink() for name in _PREPARED_FILES
-        ):
-            if not all(
-                (output / name).is_file() and not _is_link(output / name)
-                for name in _PREPARED_FILES
-            ):
+        if any((output / name).exists() or (output / name).is_symlink() for name in _PREPARED_FILES):
+            if not all((output / name).is_file() and not _is_link(output / name) for name in _PREPARED_FILES):
                 raise ValueError("Prepared dataset is incomplete; existing files preserved")
-            from dataset_access import read_local_dataset
+            from .dataset_access import read_local_dataset
 
             audit = json.loads((output / "preparation.json").read_text(encoding="utf-8"))
             if audit.get("source_recipe_sha256") != spec["recipe_sha256"]:
@@ -351,9 +346,7 @@ def prepare_dataset(dataset, dataset_root, *, cache_root=None, chunk_size=250000
             hx[destination], hf[destination] = values[selected], True
     if not found.all() or any(not value[2].all() for value in role_data.values()):
         raise ValueError("Incomplete raw source replay")
-    keep = np.isfinite(np.fmin.reduce(x, axis=0)) & (
-        np.fmin.reduce(x, axis=0) < np.fmax.reduce(x, axis=0)
-    )
+    keep = np.isfinite(np.fmin.reduce(x, axis=0)) & (np.fmin.reduce(x, axis=0) < np.fmax.reduce(x, axis=0))
     if not keep.all():
         raise ValueError("Prepared feature map would change; check the exact raw release")
     for source in spec["source_files"]:
@@ -394,7 +387,9 @@ def prepare_dataset(dataset, dataset_root, *, cache_root=None, chunk_size=250000
                 "feature_names": features,
                 "dropped_train_constants": [],
                 "fraction": "full",
-                "selection_description": "all eligible original TRAIN source identities; known heldout and confirmation excluded",
+                "selection_description": (
+                    "all eligible original TRAIN source identities; known heldout and confirmation excluded"
+                ),
                 "all_eligible_train_included": True,
                 "known_heldout_identities_excluded": len(exclusion),
                 "verified_frozen_heldout_source_rows": len(heldout),
@@ -406,7 +401,7 @@ def prepare_dataset(dataset, dataset_root, *, cache_root=None, chunk_size=250000
                 "preparation_route": "verified_raw_source_replay",
             },
         )
-        from data_io import load_data
+        from .data_io import load_data
 
         load_data(data)
         _install_prepared(staged, output, cache_root)

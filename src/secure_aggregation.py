@@ -10,13 +10,12 @@ import hashlib
 import json
 import math
 import multiprocessing as mp
-from multiprocessing.reduction import ForkingPickler
 import secrets
 import time
 from dataclasses import dataclass
+from multiprocessing.reduction import ForkingPickler
 
 import numpy as np
-
 
 PRIME = (1 << 61) - 1
 SCHEMA = "two_server_additive_sum_v1"
@@ -79,20 +78,11 @@ def _validate_base(clients, dimension, clip, scale):
         raise ValueError("Positive integer dimension required")
     if type(scale) is not int or scale < 1:
         raise ValueError("Positive integer fixed-point scale required")
-    if (
-        isinstance(clip, bool)
-        or not isinstance(clip, (float, int))
-        or not math.isfinite(clip)
-        or clip <= 0
-    ):
+    if isinstance(clip, bool) or not isinstance(clip, (float, int)) or not math.isfinite(clip) or clip <= 0:
         raise ValueError("Positive finite clipping radius required")
     bound = float(clip) * scale
     # Keep rounding representable in float64 and prevent signed aggregate wrap.
-    if (
-        not math.isfinite(bound)
-        or bound >= (1 << 52)
-        or math.ceil(bound) * len(clients) >= PRIME // 2
-    ):
+    if not math.isfinite(bound) or bound >= (1 << 52) or math.ceil(bound) * len(clients) >= PRIME // 2:
         raise ValueError("Fixed-point contract could overflow the signed aggregate")
 
 
@@ -122,11 +112,7 @@ def _validate_contract(value, base):
     ):
         raise SecureAggregationError("invalid_round")
     parent = value["parent_model"]
-    if (
-        not isinstance(parent, str)
-        or len(parent) != 64
-        or any(c not in "0123456789abcdef" for c in parent)
-    ):
+    if not isinstance(parent, str) or len(parent) != 64 or any(c not in "0123456789abcdef" for c in parent):
         raise SecureAggregationError("invalid_parent_model")
 
 
@@ -310,9 +296,7 @@ class SecureAggregationSession:
                 if self._counters is not None:
                     size = len(ForkingPickler.dumps(response))
                     self._counters["received_payload_bytes"] += size
-                    self._counters["received_frame_header_bytes"] += _frame_header_bytes(
-                        connection, size
-                    )
+                    self._counters["received_frame_header_bytes"] += _frame_header_bytes(connection, size)
                     self._counters["received_messages"] += 1
                 if not isinstance(response, dict) or response.get("ok") is not True:
                     code = (
@@ -336,9 +320,7 @@ class SecureAggregationSession:
                 if self._counters is not None:
                     size = len(ForkingPickler.dumps(message))
                     self._counters["sent_payload_bytes"] += size
-                    self._counters["sent_frame_header_bytes"] += _frame_header_bytes(
-                        connection, size
-                    )
+                    self._counters["sent_frame_header_bytes"] += _frame_header_bytes(connection, size)
                     self._counters["sent_messages"] += 1
         except (EOFError, OSError):
             self._fail("aggregation_worker_disconnected")
@@ -376,23 +358,17 @@ class SecureAggregationSession:
         """Client-local clip/quantize/share; return only public acceptance metadata."""
         if self._active is None:
             self._fail("no_active_round")
-        if contract is not None and (
-            not isinstance(contract, SecureContract) or contract != self._active
-        ):
+        if contract is not None and (not isinstance(contract, SecureContract) or contract != self._active):
             self._fail("stale_or_changed_contract")
         if not isinstance(client_id, str) or client_id not in self.clients:
             self._fail("unregistered_client")
         if client_id in self._submitted:
             self._fail("duplicate_client")
         try:
-            quantized = _clip_quantize(
-                update, self._active.dimension, self._active.clip, self._active.scale
-            )
+            quantized = _clip_quantize(update, self._active.dimension, self._active.clip, self._active.scale)
             first, second = _split_quantized(quantized)
         except (SecureAggregationError, TypeError, ValueError, OverflowError) as error:
-            self._fail(
-                str(error) if isinstance(error, SecureAggregationError) else "invalid_update_vector"
-            )
+            self._fail(str(error) if isinstance(error, SecureAggregationError) else "invalid_update_vector")
         payloads = [
             {"contract_hash": self._active.contract_hash, "client_id": client_id, "share": share}
             for share in (first, second)
@@ -445,26 +421,30 @@ class SecureAggregationSession:
             "security_scope": "two_noncolluding_workers_trusted_local_simulation",
         }
         counters = dict(self._counters)
-        receipt.update(
-            {
-                "numeric_share_upload_bytes": 2 * len(self.clients) * self.dimension * 8,
-                "aggregate_share_download_bytes": 2 * self.dimension * 8,
-                "numeric_payload_encoding": "analytical uint64 field-element count; actual pickle IPC bytes reported separately",
-                "serialized_application_bytes": counters["sent_payload_bytes"]
-                + counters["received_payload_bytes"],
-                "local_ipc_frame_bytes": sum(
-                    counters[key]
-                    for key in (
-                        "sent_payload_bytes",
-                        "received_payload_bytes",
-                        "sent_frame_header_bytes",
-                        "received_frame_header_bytes",
-                    )
-                ),
-                "communication_counters": counters,
-                "communication_scope": "complete round begin/share/finish commands and responses; ForkingPickler payload and Connection frame headers; excludes worker startup and OS transport overhead",
-            }
-        )
+        receipt.update({
+            "numeric_share_upload_bytes": 2 * len(self.clients) * self.dimension * 8,
+            "aggregate_share_download_bytes": 2 * self.dimension * 8,
+            "numeric_payload_encoding": (
+                "analytical uint64 field-element count; actual pickle IPC bytes reported separately"
+            ),
+            "serialized_application_bytes": (
+                counters["sent_payload_bytes"] + counters["received_payload_bytes"]
+            ),
+            "local_ipc_frame_bytes": sum(
+                counters[key]
+                for key in (
+                    "sent_payload_bytes",
+                    "received_payload_bytes",
+                    "sent_frame_header_bytes",
+                    "received_frame_header_bytes",
+                )
+            ),
+            "communication_counters": counters,
+            "communication_scope": (
+                "complete round begin/share/finish commands and responses; ForkingPickler payload and"
+                " Connection frame headers; excludes worker startup and OS transport overhead"
+            ),
+        })
         self._previous_round = contract.round_index
         self._active = None
         self._submitted = set()
