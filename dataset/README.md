@@ -56,6 +56,23 @@ The preparation code verifies the raw CSVs and uses the bundled row identities t
 
 Keep the 12 recipe and row identity files under `src/fedcaid_resources/preparation/` unchanged. Generated caches belong under `data_cache/`, and results under `outputs/`. Follow each provider's terms for dataset use and redistribution.
 
+## Optional CSE-CIC-IDS2018 capture
+
+From the [CSE-CIC-IDS2018 registry](https://registry.opendata.aws/cse-cic-ids2018/),
+download the [16 February 2018 feature CSV](https://cse-cic-ids2018.s3.amazonaws.com/Processed%20Traffic%20Data%20for%20ML%20Algorithms/Friday-16-02-2018_TrafficForML_CICFlowMeter.csv).
+Rename it to `02-16-2018.csv` and place it in
+`dataset/CSE-CIC-IDS2018/` without changing its contents. The expected SHA256 is:
+
+```text
+1a4919faa0c49c7af97230b0c2d076eba23ee6dd81103a3801d51ac316355d8b
+```
+
+The capture is optional for the primary benchmark. It contains the Hulk and
+SlowHTTPTest traffic from the same public acquisition day. The [project
+README](../README.md#optional-cse-cic-ids2018-replay) describes the automatic
+and focused replay modes. Fetch the original 2017 CSVs above as well to
+reconstruct the CAL threshold used by the focused replay.
+
 ## Historical dataset bundle
 
 The earlier [dataset release](https://gitee.com/liuluz/fed-caid/releases/tag/datasets-v1.0.0) documented the following split archives. If you already obtained this bundle under the providers' terms, keep the parts for each dataset together in a `downloads/` directory at the repository root. Use the accompanying `README_DATASETS.md`, `SHA256SUMS.txt` and `dataset_manifest.json` to identify and verify the files. Keep the original filenames.

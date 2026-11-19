@@ -324,15 +324,47 @@ def _write_abort(summary, plan_path, error):
     )
 
 
-def run_final_review(project, output=None, *, hulk_manifest=None, lan_manifest=None, device='auto'):
-    """Create and execute a fresh run under the specified output container."""
+def _complete_hulk_2018(output, source, frozen, project):
+    """Save supplementary evidence apart from the sealed benchmark report."""
+    from .revision_hulk_2018 import run_hulk_2018
+
+    print(f'FedCAID | CSE-CIC-IDS2018 exploratory evaluation | {output}', flush=True)
+    receipt = run_hulk_2018(output, source, frozen, project)
+    print(f"FedCAID | CSE-CIC-IDS2018 completed | {receipt['summary_path']}", flush=True)
+    return 0
+
+
+def run_hulk_2018_review(project, source_run, source_csv):
+    """Run one new pilot using an explicitly selected finalized review run."""
+    from .revision_hulk_2018 import validate_hulk_2018_source
+    from .revision_local_sources import _official_kind
+
+    project, source_run = Path(project).resolve(), Path(source_run).resolve(strict=True)
+    source = validate_hulk_2018_source(source_csv)
+    if _official_kind(source_run) != FULL_WORKFLOW:
+        raise ValueError('Select a completed full review run with verified frozen Hulk models.')
+    run = _new_run_directory(project, project / 'outputs/hulk_2018_review', 'cpu')
+    return _complete_hulk_2018(run / 'hulk_2018', source, source_run / 'hulk_attribution', project)
+
+
+def run_final_review(project, output=None, *, hulk_manifest=None, lan_manifest=None,
+                     hulk_2018_source=None, device='auto'):
+    """Run the four-dataset review and the declared optional 2018 study."""
     project = Path(project).resolve()
+    source = None
+    if hulk_2018_source is not None:
+        from .revision_hulk_2018 import validate_hulk_2018_source
+
+        source = validate_hulk_2018_source(hulk_2018_source)
     output = _new_run_directory(project, output, device)
     manifests = (
         Path(hulk_manifest or project / 'external' / 'hulk_manifest.json').resolve(),
         Path(lan_manifest or project / 'external' / 'lan_manifest.json').resolve(),
     )
-    return _execute_plan(project, output, manifests, device)
+    status = _execute_plan(project, output, manifests, device)
+    if status == 0 and source is not None:
+        return _complete_hulk_2018(output / 'hulk_2018', source, output / 'hulk_attribution', project)
+    return status
 
 
 def run_iov_review(project, output=None, *, device='auto', smoke=False):

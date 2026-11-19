@@ -31,6 +31,8 @@ def _parse_args(argv):
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     _add_modes(parser)
     parser.add_argument('--hulk-manifest', type=Path)
+    parser.add_argument('--hulk-2018-source', type=Path,
+                        help='Optional original CSE-CIC-IDS2018 CSV for full review or --hulk-2018')
     parser.add_argument('--lan-manifest', type=Path)
     parser.add_argument('--bind', default='127.0.0.1')
     parser.add_argument('--port', type=int)
@@ -50,6 +52,8 @@ def _add_modes(parser):
     """Register mutually exclusive run modes on the one public entry."""
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--full-review', action='store_true', help='Run the full review benchmark')
+    mode.add_argument('--hulk-2018', type=Path, metavar='RUN',
+                      help='Run the 2018 study with a completed full review run and its frozen Hulk models')
     mode.add_argument('--iov-review', action='store_true', help='Run the fresh five-seed fixed-alarm IoV ablation')
     mode.add_argument('--nb15-low-far', action='store_true', help='Run the five-seed NB15 TabM weight comparison')
     mode.add_argument('--nb15-threshold', action='store_true', help='Run the five-seed NB15 CAL-threshold comparison')
@@ -79,8 +83,10 @@ def _validate_args(parser, args):
         or args.smoke
         or args.demo
     )
-    if local_mode and (args.hulk_manifest is not None or args.lan_manifest is not None):
+    if (local_mode or args.hulk_2018) and (args.hulk_manifest is not None or args.lan_manifest is not None):
         parser.error('Manifest options are only used by full review or preflight')
+    if (local_mode or args.preflight_only) and args.hulk_2018_source is not None:
+        parser.error('--hulk-2018-source requires full review or --hulk-2018')
 
 
 def _dataset_files(datasets):
@@ -104,9 +110,24 @@ def _full_review(args):
     """Start the full review once all required original inputs are present."""
     _, missing = _dataset_files(DATASETS)
     _require_data(missing)
+    from src.revision_hulk_2018 import DEFAULT_CAPTURE
+
+    source = args.hulk_2018_source
+    if source is None and (PROJECT / DEFAULT_CAPTURE).exists():
+        source = PROJECT / DEFAULT_CAPTURE
+    optional = {'hulk_2018_source': source} if source is not None else {}
     return revision_final_review.run_final_review(
-        PROJECT, hulk_manifest=args.hulk_manifest, lan_manifest=args.lan_manifest
+        PROJECT, hulk_manifest=args.hulk_manifest, lan_manifest=args.lan_manifest, **optional
     )
+
+
+def _hulk_2018_review(args):
+    """Replay the optional 2018 study with explicitly selected completed source models."""
+    from src.revision_hulk_2018 import DEFAULT_CAPTURE
+
+    _require_data(_dataset_files(('CIC-IDS-2017',))[1])
+    source = args.hulk_2018_source or PROJECT / DEFAULT_CAPTURE
+    return revision_final_review.run_hulk_2018_review(PROJECT, args.hulk_2018, source)
 
 
 def _demo():
@@ -258,6 +279,8 @@ def _run_utility(args):
         return _collector(args)
     if args.preflight_only:
         return _check_manifests(args)
+    if args.hulk_2018 is not None:
+        return _hulk_2018_review(args)
     if args.refresh_report is not None:
         return _refresh_report(args.refresh_report)
     if args.local_evidence:

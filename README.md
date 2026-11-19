@@ -39,6 +39,36 @@ and the run receipt identify the evaluated source. The reference machine used
 Windows, Python 3.11.13, PyTorch 2.5.1 with CUDA 12.1 and an NVIDIA GeForce RTX
 4060 Laptop GPU.
 
+## Optional CSE-CIC-IDS2018 replay
+
+Place the unmodified capture at `dataset/CSE-CIC-IDS2018/02-16-2018.csv`
+using the [dataset guide](dataset/README.md#optional-cse-cic-ids2018-capture).
+Running `main.py` with no arguments then scores this capture after the primary
+workflow finishes, using the five frozen Hulk models from that same run.
+Read `hulk_2018/SUMMARY.md` and `hulk_2018/diagnostics/SUMMARY.md` inside
+the run directory. Without the optional CSV, the command completes the
+ordinary four dataset workflow.
+
+To replay the capture without retraining, keep the original CIC-IDS-2017
+CSVs and select a completed full review directory that still contains its
+verified `hulk_attribution/` models:
+
+```sh
+python main.py --hulk-2018 <completed-full-run>
+```
+
+Use `--hulk-2018-source <path-to-original-csv>` to specify the capture in
+another location for either command. Focused replay writes a new directory
+under `outputs/hulk_2018_review/` and leaves the selected run intact. Use
+focused replay to retry an interrupted 2018 step after its primary workflow
+has completed.
+
+This is an exploratory evaluation of one published capture. The score
+diagnosis compares the frozen working point with a threshold replay fitted
+on 2017 CAL. The low FAR curve calculated from the 2018 labels describes
+performance on that capture. Results are kept separate from the primary
+benchmark and the predeclared independent confirmation.
+
 ## Check the installation
 
 ```sh
@@ -63,7 +93,7 @@ Start with `outputs/fedcaid_review/run_*/report/SUMMARY.md`.
 | `report/SUMMARY.md` | Experiment coverage, metrics and paired results |
 | `report/tables/` | Per stage working points, class support and confusion counts |
 
-The independent Hulk capture and LAN measurements require separate
+Predeclared independent Hulk confirmation and LAN measurements require separate
 declarations. Create `external/` locally when configuring these optional stages.
 The local run can finish with status `completed_with_pending`. The command returns exit
 code 2 for failures or pending required stages. See the
