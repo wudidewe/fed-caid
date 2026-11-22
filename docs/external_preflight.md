@@ -4,52 +4,12 @@ The one-click experiment trains the five Hulk development cases again in its
 own run directory. External validation uses the frozen bundles from that same
 run. The `--preflight-only` mode checks the declaration before training.
 
-## Hulk manifest example
-
-Create `external/` locally and save the following example as
-`external/hulk_manifest.json`. Replace every placeholder using an independently
-acquired capture before running the optional confirmation. The declaration stays
-outside Git. Set `unseen_in_development` to true only when the
+The [manifest template](../external/hulk_manifest.example.json) is a starting point. It contains no
+real capture, hash, custodian declaration or result and cannot be run as a manifest.
+Copy it to the configured manifest path and replace every placeholder using an
+independently acquired capture. Set `unseen_in_development` to true only when the
 custodian can attest to that fact. No benchmark split or renamed development file
 becomes an independent capture merely by appearing in this file.
-
-```json
-{
-  "version": 1,
-  "dataset": "CIC-IDS-2017",
-  "target_class": "DoS Hulk",
-  "attestation": {
-    "custodian": "<actual capture custodian>",
-    "unseen_in_development": false
-  },
-  "exact_overlap_policy": "reject",
-  "captures": [
-    {
-      "capture_id": "<unique independent acquisition ID>",
-      "prepared_csv": "<relative or absolute path to prepared capture CSV>",
-      "sha256": "<SHA256 of prepared CSV>",
-      "raw_files": [
-        {
-          "path": "<relative or absolute path to original capture file>",
-          "sha256": "<SHA256 of original capture file>"
-        }
-      ]
-    }
-  ],
-  "criteria": {
-    "min_target_f1_effect_pp": 1.0,
-    "max_far": 0.01,
-    "max_far_increase": 0.001,
-    "max_fnr_increase": 0.005,
-    "min_target_groups": 5,
-    "min_benign_groups": 5,
-    "min_seeds": 5,
-    "min_captures": 1,
-    "min_target_f1_over_base_pp": 1.0,
-    "max_macro_f1_loss_pp": 1.0
-  }
-}
-```
 
 The example criteria are starting values, not proof of practical usefulness.
 Fix the intended criteria before viewing confirmation results. A single capture

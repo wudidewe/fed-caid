@@ -69,13 +69,15 @@ class Resources:
 class ResidentInference:
     """Time warm one-record inference including transform, detector and decision."""
 
-    def __init__(self, model, transform, raw, device):
+    def __init__(self, model, transform, raw, device, *, score_enhancer=None):
         self.model, self.transform, self.raw, self.device = model, transform, raw, device
+        self.score_enhancer = score_enhancer
 
     def __call__(self, decide):
         def infer():
-            prediction = core.log_prediction(self.model, self.transform(self.raw), self.device)
-            decide(core.probabilities(prediction))
+            x = self.transform(self.raw)
+            p = core.probabilities(core.log_prediction(self.model, x, self.device))
+            decide(p if self.score_enhancer is None else self.score_enhancer(self.raw, x, p))
             if self.device == 'cuda':
                 torch.cuda.synchronize()
 

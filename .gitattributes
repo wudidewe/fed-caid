@@ -28,3 +28,6 @@ src/revision_supplement.py -text !eol
 src/revision_targeted_subtypes.py -text !eol
 src/revision_v12.py -text !eol
 src/revision_v12_launch_plan.py -text !eol
+
+# Keep this run plan hash stable across Git checkouts.
+src/revision_alarm_comparison.py -text !eol

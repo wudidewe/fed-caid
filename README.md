@@ -12,8 +12,8 @@ federated aggregation.
    [requirements.txt](requirements.txt) in that interpreter.
 2. Place the original CSVs under `dataset/` using the
    [dataset preparation guide](dataset/README.md).
-3. Select the **FedCAID** run configuration or run the root [main.py](main.py).
-   Leave the program arguments empty for the full local experiment.
+3. Run the root [main.py](main.py) in PyCharm. Leave the program arguments empty
+   for the full local experiment.
 
 The launcher lists missing files and returns exit code 2 if the dataset layout
 is incomplete. With all required files present, it verifies the inputs and
@@ -25,19 +25,28 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-The primary benchmark uses four datasets and five seeds, 42 through 46, and
-reports grouped development validation (VAL) for local TabM, local adaptation,
-the compact federated adapter and full weight FedAvg. CAN quantization, compact
-adapter transfer and the later day CIC-UNSW-NB15 benchmark use separate
-retrospective test protocols. The Hulk and Exploits subtype comparisons reuse
-fixed binary alarms.
+The primary benchmark trains the dual head attention TabM on all grouped
+TRAIN rows for each of the four datasets and seeds 42 through 46. Each client
+uses the benign CAL holdout scores to fit and lock one scalar alarm threshold.
+The detector, local adapter and compact federated adapter use that same alarm
+mask when compared on grouped development validation (VAL). The adapters
+change predicted attack subtypes. The fixed 0.70 cutoff uses the same detector
+scores and provides a threshold comparison. Find these results and paired
+estimates under `alarm_comparison/`.
 
-The reference results in the manuscript come from run
-`run_20261117_114937_guhefcl1` on 17 November 2026. The
-[recorded source commit](https://github.com/wudidewe/fed-caid/tree/6f72abd255d4782302fd27ac35f8061f529ec141)
-and the run receipt identify the evaluated source. The reference machine used
-Windows, Python 3.11.13, PyTorch 2.5.1 with CUDA 12.1 and an NVIDIA GeForce RTX
-4060 Laptop GPU.
+`benchmark_matrix/` records the separately trained original TabM and its full
+weight FedAvg reference on the matched partitions. The CAN quantization, compact
+adapter transfer, and later day CIC-UNSW-NB15 protocols are separate studies of
+the original method. The Hulk and Exploits experiments compare subtype methods
+under fixed binary alarms. Use `python main.py --class-cal-diagnostics` to run
+the focused class conditioned CAL comparison with its scalar fallback.
+
+The current workflow was verified by the complete local run
+`run_20261122_075325_718eo9nm` on 22 November 2026. The run plan records the
+source file hashes. It used Windows, Python 3.11.13, PyTorch 2.5.1 with CUDA
+12.1 and an NVIDIA GeForce RTX 4060 Laptop GPU. Earlier results can be traced
+to their own run plans and source commits. See [the review evidence guide](docs/review_evidence.md)
+for the current report tables.
 
 ## Optional CSE-CIC-IDS2018 replay
 
@@ -72,6 +81,7 @@ benchmark and the predeclared independent confirmation.
 ## Check the installation
 
 ```sh
+python -m unittest discover -s tests -v
 python main.py --demo
 python main.py --smoke
 ```
@@ -79,8 +89,7 @@ python main.py --smoke
 `--demo` runs a small synthetic CPU example and saves a receipt in
 `outputs/fedcaid_demo/`. `--smoke` exercises the synthetic integration suite.
 Both print `synthetic_only=True`. These checks require Python dependencies and
-run without the source CSVs. GitHub Actions runs both checks on Windows and
-Ubuntu and verifies installation from a built wheel.
+run without the source CSVs.
 
 ## Results and follow up
 
@@ -94,8 +103,8 @@ Start with `outputs/fedcaid_review/run_*/report/SUMMARY.md`.
 | `report/tables/` | Per stage working points, class support and confusion counts |
 
 Predeclared independent Hulk confirmation and LAN measurements require separate
-declarations. Create `external/` locally when configuring these optional stages.
-The local run can finish with status `completed_with_pending`. The command returns exit
+declarations under `external/`. When those declarations are absent, the local
+run can finish with status `completed_with_pending`. The command returns exit
 code 2 for failures or pending required stages. See the
 [independent capture guide](docs/external_preflight.md) and the
 [LAN setup guide](docs/protocol_validation.md).

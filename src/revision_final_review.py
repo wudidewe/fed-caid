@@ -5,6 +5,7 @@ from pathlib import Path
 from tempfile import mkdtemp
 from time import perf_counter
 
+from .revision_alarm_comparison import PRIMARY_METHOD, run_alarm_comparison
 from .revision_benchmark_matrix import run_benchmark_matrix
 from .revision_donor_check_replay import run_donor_check_replay
 from .revision_external_preflight import preflight_hulk_declaration, run_verified_hulk
@@ -18,11 +19,12 @@ from .revision_targeted_subtypes import run_targeted
 from .revision_v12 import _bindings, _completion_summary, _hash, _read, _write
 
 CURRENT_REVIEW = 'fedcaid_review'
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 REVIEW_STATUSES = {'completed', 'pending', 'failed'}
 STAGE_LABELS = {
     'loopback': '单机 TCP 回环与聚合校验（180 轮）',
-    'benchmark_matrix': '四数据集基础、适配与 FedAvg（分组 VAL，五种子）',
+    'benchmark_matrix': '原版 TabM 与 FedAvg 参考实验（分组 VAL，五种子）',
+    'alarm_comparison': '双头 TabM 加标量 CAL 主实验（四数据集，分组 VAL，五种子）',
     'iov_diagnosis': 'CIC-IoV-2024 固定基础告警对照（五种子）',
     'lan': '真实 LAN 通信测量',
     'nb15_pair': 'NB15 TabM 参考与难正常样本候选（五种子，新训练）',
@@ -97,6 +99,10 @@ def _make_plan(project, output, manifests, device, smoke):
         'manifests': [str(path) for path in manifests],
         'input_preflight': check_optional_inputs(*manifests) if manifests else {},
         'stages': stages,
+        **({**PRIMARY_METHOD, 'primary_stage': 'alarm_comparison',
+            'reference_detector': 'original_tabm', 'reference_stage': 'benchmark_matrix',
+            'comparison_alarm_policy': 'fixed_070'}
+           if manifests else {}),
         'source_sha256': _bindings(
             source, sorted(path.relative_to(source).as_posix() for path in source.rglob('*.py'))
         ),
@@ -196,6 +202,13 @@ def _operations(project, output, preflight, state, device):
     return {
         'loopback': run_loopback,
         'benchmark_matrix': lambda path: run_benchmark_matrix(path, project, device=device),
+        'alarm_comparison': lambda path: _after(
+            state,
+            'benchmark_matrix',
+            lambda: run_alarm_comparison(
+                path, project, device=device, reference=output / 'benchmark_matrix', primary=True,
+            ),
+        ),
         'iov_diagnosis': lambda path: run_fresh_iov_diagnosis(path, project, device=device),
         'lan': lambda path: _with_declaration(preflight['lan'], lambda manifest: run_lan(path, manifest)),
         'nb15_pair': lambda path: run_fresh_nb15_pair(path, project, device=device),
@@ -249,7 +262,7 @@ def _planned_operations(project, output, plan, state, device):
     if plan['workflow'] == IOV_WORKFLOW:
         return {
             IOV_WORKFLOW: lambda path: run_fresh_iov_diagnosis(
-                path, project, device=device, smoke=plan['synthetic_only']
+                path, project, device=device, smoke=plan['synthetic_only'],
             ),
             'report': lambda path: run_fresh_report(path, state),
         }

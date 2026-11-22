@@ -6,6 +6,7 @@ from hashlib import sha256
 import numpy as np
 
 from .revision_data import _feature_keys
+from .revision_iov_id_gate import ID_GATE_RULE, TrainIdGate, id_thresholds
 from .revision_report import summarize, write_csv
 from .revision_v12 import _write
 
@@ -113,6 +114,8 @@ def _calibration_evidence(values, alarms, record):
     observed_far = _rate(int(alarms.sum()), len(values))
     if observed_far != record['calibration_far'] or len(values) != record['benign_holdout_rows']:
         raise ValueError('IoV CAL counts differ from the original calibration receipt')
+    if record['calibration_rule'] == ID_GATE_RULE:
+        return {}
     floor, target = float(record['threshold_floor']), float(record['target_far'])
     quantile = float(np.quantile(values, 1 - target, method='higher')) if len(values) else None
     empirical = record['calibration_rule'] == 'empirical_benign_holdout_quantile_higher'
@@ -125,17 +128,18 @@ def _calibration_evidence(values, alarms, record):
     }
 
 
-def _operating_row(population, scores, alarms, record, role):
+def _operating_row(population, scores, alarms, record, role, thresholds):
     """Measure the scored role using the unmodified branch threshold."""
     benign = population.labels == 0
     return {
         **{field: record[field] for field in ('threshold', 'target_far', 'threshold_floor', 'calibration_rule')},
+        **{field: record[field] for field in ('threshold_seen_id', 'threshold_unseen_id') if field in record},
         **(_calibration_evidence(scores[benign], alarms[benign], record) if role == 'cal_holdout' else {}),
         **_counts(population, alarms),
         **_tail(scores[benign], 'benign'),
         **_tail(scores[~benign], 'attack'),
         **_false_alarm_concentration(population.groups, benign, alarms),
-        'equal_to_threshold_rows': int(np.count_nonzero(scores == record['threshold'])),
+        'equal_to_threshold_rows': int(np.count_nonzero(scores == thresholds)),
     }
 
 
@@ -237,20 +241,38 @@ def _validate_val_metrics(rows, evaluations, pooled, modes):
 def _check_fixed_parity(rows):
     """Assert fixed branches use the base threshold, score and mask in both roles."""
     identities = {(row['mode'], row['client'], row['role']): row for row in rows}
-    keys = ('threshold', 'ordered_attack_score_sha256', 'alarm_mask_sha256')
+    keys = (
+        'threshold', 'threshold_seen_id', 'threshold_unseen_id', 'ordered_attack_score_sha256', 'alarm_mask_sha256',
+    )
     for (mode, client, role), row in identities.items():
         if mode not in FIXED_MODES:
             continue
         base = identities['base_threshold', client, role]
-        if any(row[field] != base[field] for field in keys):
+        if any(row.get(field) != base.get(field) for field in keys):
             raise ValueError(f'IoV fixed-base score or mask differs in {mode}/{client}/{role}')
 
 
 class IoVOperatingDiagnostics:
     """Observe live CAL/VAL probabilities, retaining only aggregate evidence."""
 
-    def __init__(self, parts, roster, cal_splits, *, class_names=None, fixed_base_alarm=False):
+    def __init__(
+        self, parts, roster, cal_splits, *, class_names=None, fixed_base_alarm=False, can_id_strata=False,
+        id_gate_column=None,
+    ):
         self._populations = _populations(parts, roster, cal_splits)
+        self._unseen_ids = {}
+        if can_id_strata or id_gate_column is not None:
+            for client, (route, (_, holdout)) in enumerate(zip(roster, cal_splits, strict=True)):
+                column = 0 if id_gate_column is None else id_gate_column
+                train_ids = parts['train'][0][route['train'], column]
+                gate = TrainIdGate(train_ids) if id_gate_column is not None else None
+                if gate is None:
+                    train_ids = np.unique(train_ids)
+                for role, data_role, rows in (
+                    ('cal_holdout', 'cal', route['cal'][holdout]), ('val', 'val', route['val']),
+                ):
+                    ids = parts[data_role][0][rows, column]
+                    self._unseen_ids[client, role] = ~(gate.seen(ids) if gate is not None else np.isin(ids, train_ids))
         self._names = tuple(class_names) if class_names is not None else None
         self._modes = ALL_MODES if fixed_base_alarm else MODES
         self._alarms = {}
@@ -277,7 +299,8 @@ class IoVOperatingDiagnostics:
             self._names = tuple(map(str, range(cal_probabilities.shape[1])))
         cal_scores = np.clip(cal_probabilities[:, 1:].sum(1), 0, 1)
         if cal_predictions is None:
-            cal_predictions = np.where(cal_scores > calibration['threshold'], cal_probabilities[:, 1:].argmax(1) + 1, 0)
+            thresholds = self._thresholds(calibration, client, 'cal_holdout')
+            cal_predictions = np.where(cal_scores > thresholds, cal_probabilities[:, 1:].argmax(1) + 1, 0)
         self._observe_role((mode, client, 'cal_holdout'), cal_scores, cal_predictions, calibration)
         self._observe_role((mode, client, 'val'), val_scores, val_predictions, calibration)
 
@@ -285,20 +308,31 @@ class IoVOperatingDiagnostics:
         """Measure each role against the exact native score and class decisions."""
         mode, client, role = key
         population = self._populations[client, role]
-        alarms = _alarm_mask(scores, calibration['threshold'], population)
+        thresholds = self._thresholds(calibration, client, role)
+        alarms = _alarm_mask(scores, thresholds, population)
         if not np.array_equal(alarms, predictions > 0):
             raise ValueError(f'IoV {role.upper()} score/cutoff replay changed the original alarm mask')
         if key in self._alarms:
             raise ValueError('IoV observed a branch/client role twice')
         self._alarms[key] = alarms
         self._matrices[key] = _confusion(population.labels, predictions, len(self._names))
-        row = _operating_row(population, scores, alarms, calibration, role)
+        row = _operating_row(population, scores, alarms, calibration, role, thresholds)
+        if self._unseen_ids:
+            unseen = self._unseen_ids[client, role]
+            for name, mask in (('seen_id', ~unseen), ('unseen_id', unseen)):
+                scope = _Population(population.labels[mask], population.groups[mask])
+                row.update({f'{name}_{key}': value for key, value in _counts(scope, alarms[mask]).items()})
         row['alarm_mask_sha256'] = _alarm_sha256(alarms)
         row['ordered_attack_score_sha256'] = _score_sha256(scores)
         if role == 'val':
             row['strict_score_alarm_parity'] = True
             row['val_prediction_sha256'] = sha256(np.asarray(predictions, dtype='<i8').tobytes()).hexdigest()
         self._operating.append({'mode': mode, 'client': client, 'role': role, **row})
+
+    def _thresholds(self, calibration, client, role):
+        if calibration['calibration_rule'] == ID_GATE_RULE:
+            return id_thresholds(~self._unseen_ids[client, role])
+        return calibration['threshold']
 
     def finish(self, evaluations):
         """Return complete aggregates while discarding temporary prediction masks."""

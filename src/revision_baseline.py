@@ -9,7 +9,21 @@ import numpy as np
 import torch
 
 from . import utils as core
-from .revision_detector_objective import objective_class_weights, objective_settings, training_losses
+from .revision_detector_objective import (
+    objective_class_weights,
+    objective_distillation_targets,
+    objective_row_weights,
+    objective_settings,
+    training_losses,
+)
+from .revision_iov_binary import (
+    BINARY_HEAD_MODES,
+    BINARY_SWA_MODES,
+    binary_alarm_losses,
+    binary_group_row_weights,
+    binary_objective_settings,
+    make_binary_alarm_model,
+)
 
 
 def _pooled_train_sample(train_parts, cap, seed):
@@ -35,13 +49,19 @@ def _sync(device):
         torch.cuda.synchronize(device)
 
 
-def _train_client(model, transform, train, loss_inputs, epochs, rng, args, device):
+def _train_client(model, transform, train, loss_inputs, epochs, rng, args, device, *, row_weights=None, teacher=None):
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.detector_lr, weight_decay=args.detector_weight_decay)
     x, y = train
     prior, weights = loss_inputs
     objective = getattr(args, 'detector_objective', 'prior_adjusted')
+    binary_head = getattr(args, 'tabm_binary_head', None)
+    binary_tail = binary_head == 'binary_tail'
     prior_offset = torch.as_tensor(prior, dtype=torch.float32, device=device)
     loss_weights = None if weights is None else torch.as_tensor(weights, dtype=torch.float32, device=device)
+    if row_weights is not None:
+        row_weights = torch.as_tensor(row_weights, device=device)
+    if teacher is not None:
+        teacher = tuple(torch.as_tensor(target, device=device) for target in teacher)
     model.train()
     total_loss = torch.zeros((), dtype=torch.float64, device=device)
     for _ in range(epochs):
@@ -52,7 +72,15 @@ def _train_client(model, transform, train, loss_inputs, epochs, rng, args, devic
             optimizer.zero_grad(set_to_none=True)
             logits = model(torch.as_tensor(transform(x[rows]), device=device))
             labels = torch.as_tensor(y[rows], dtype=torch.long, device=device)
-            loss = training_losses(logits, labels, prior_offset, loss_weights, objective).mean()
+            batch_weights = None if row_weights is None else row_weights[rows]
+            batch_teacher = None if teacher is None else tuple(target[rows] for target in teacher)
+            losses = training_losses(
+                logits, labels, prior_offset, loss_weights, objective, row_weights=batch_weights,
+                teacher=batch_teacher,
+            )
+            if binary_head is not None:
+                losses = losses + binary_alarm_losses(logits, labels, tail=binary_tail, row_weights=batch_weights)
+            loss = losses.mean()
             loss.backward()
             gradient_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 5)
             finite_monitor.observe(loss, gradient_norm)
@@ -76,6 +104,14 @@ def _predict(model, transform, x, classes, device, batch_size):
         log_p = core.log_prediction(model, transform(x[rows]), device, batch_size)
         result[rows] = core.probabilities(log_p)
     return result
+
+
+def _pooled_can_ids(train_parts, transform):
+    """Match the shared scaler on column zero without materializing pooled feature rows."""
+    raw_ids = np.unique(np.concatenate([np.unique(x[:, 0]) for x, _ in train_parts])).astype(np.float64)
+    filled = np.where(np.isfinite(raw_ids), raw_ids, transform.median[0])
+    scaled = np.clip((filled - transform.mean[0]) / transform.scale[0], -12, 12).astype(np.float32)
+    return np.unique(scaled)
 
 
 def run_fedavg(train_parts, eval_features, classes, args, *, preprocessing_rows=65_536):
@@ -120,6 +156,14 @@ def run_fedavg(train_parts, eval_features, classes, args, *, preprocessing_rows=
         raise ValueError('FedAvg requires at least two pooled TRAIN rows')
     objective = getattr(args, 'detector_objective', 'prior_adjusted')
     loss_settings = objective_settings(objective)
+    binary_head = getattr(args, 'tabm_binary_head', None)
+    if binary_head in BINARY_SWA_MODES:
+        raise ValueError('Binary alarm checkpoint averaging is defined for the focused local detector experiment')
+    if binary_head is not None:
+        if binary_head not in BINARY_HEAD_MODES or objective != 'prior_adjusted':
+            raise ValueError('A binary alarm head requires a known mode and prior-adjusted class cross entropy')
+        loss_settings['tabm_binary_head'] = binary_head
+        loss_settings.update(binary_objective_settings(binary_head))
 
     core.seed(training_seed)
     started = time.perf_counter()
@@ -127,13 +171,19 @@ def run_fedavg(train_parts, eval_features, classes, args, *, preprocessing_rows=
     sample = _pooled_train_sample(train_parts, preprocessing_rows, preprocessing_seed)
     transform = core.Transform().fit(sample, neural=True)
     boundary_policy = getattr(args, 'ple_boundary_policy', 'clip_to_train_edges')
+    robust_can = getattr(args, 'tabm_can_id_robust', False)
+    can_id_kwargs = {'can_id_training': _pooled_can_ids(train_parts, transform)} if robust_can else {}
     model, bins = core.make_model(
         width,
         classes,
         'ple_cross',
         x=transform(sample),
         ple_boundary_policy=boundary_policy,
+        feature_attention=getattr(args, 'tabm_attention', False),
+        **can_id_kwargs,
     )
+    if binary_head is not None:
+        model = make_binary_alarm_model(model, bins)
     model.to(device)
     _sync(device)
     setup_seconds = time.perf_counter() - started
@@ -147,6 +197,15 @@ def run_fedavg(train_parts, eval_features, classes, args, *, preprocessing_rows=
         )
         for _, y in train_parts
     ]
+    row_weights_by_client = (
+        [binary_group_row_weights(x, y) for x, y in train_parts] if binary_head == 'binary_tail'
+        else [objective_row_weights(x, y, classes, objective) for x, y in train_parts]
+    )
+    distillation_by_client = [
+        objective_distillation_targets(x, y, classes, objective, training_seed + client)
+        for client, (x, y) in enumerate(train_parts)
+    ]
+    teacher_metadata = [metadata for _, metadata in distillation_by_client if metadata]
     shuffles = [np.random.default_rng(training_seed + 79) for _ in train_parts]
 
     trainable = dict(model.named_parameters())
@@ -160,15 +219,18 @@ def run_fedavg(train_parts, eval_features, classes, args, *, preprocessing_rows=
         round_started = time.perf_counter()
         weighted_sum = {name: torch.zeros_like(p, dtype=torch.float64) for name, p in global_weights.items()}
         mean_loss = 0.0
-        for i, (train, local_loss, rng, count) in enumerate(
-            zip(train_parts, loss_inputs, shuffles, counts, strict=True)
+        for i, (train, local_loss, row_weights, distillation, rng, count) in enumerate(
+            zip(train_parts, loss_inputs, row_weights_by_client, distillation_by_client, shuffles, counts, strict=True)
         ):
             with torch.no_grad():
                 for name, p in trainable.items():
                     p.copy_(global_weights[name])
             torch.manual_seed(training_seed + 10_003 * round_index + i)
             client_weight = count / total_count
-            loss = _train_client(model, transform, train, local_loss, local_epochs, rng, args, device)
+            loss_kwargs = {} if row_weights is None else {'row_weights': row_weights}
+            if distillation[0] is not None:
+                loss_kwargs['teacher'] = distillation[0]
+            loss = _train_client(model, transform, train, local_loss, local_epochs, rng, args, device, **loss_kwargs)
             mean_loss += client_weight * loss
             for name, p in trainable.items():
                 weighted_sum[name].add_(p.detach().cpu(), alpha=client_weight)
@@ -232,6 +294,9 @@ def run_fedavg(train_parts, eval_features, classes, args, *, preprocessing_rows=
             'training_row_visits': args.base_epochs * total_count,
             'optimizer_steps': args.base_epochs * sum(math.ceil(n / args.batch_size) for n in counts),
             'ple_diagnostics_seconds': time.perf_counter() - diagnostics_started,
+            **({
+                'teacher_total_seconds': sum(metadata['teacher_total_seconds'] for metadata in teacher_metadata),
+            } if teacher_metadata else {}),
         },
         'communication': {
             'parameter_count': parameter_count,
@@ -261,8 +326,10 @@ def run_fedavg(train_parts, eval_features, classes, args, *, preprocessing_rows=
             'prior_strength': args.prior_strength,
             'ple_boundary_policy': boundary_policy,
             'ple_boundary_version': core.PLE_BOUNDARY_VERSION,
+            **({'tabm_can_id_robust': True} if robust_can else {}),
             'ple_stability': stability,
             **loss_settings,
+            **({'distillation_teacher_by_client': teacher_metadata} if teacher_metadata else {}),
             'class_weights_by_client': [None if weights is None else weights.tolist() for _, weights in loss_inputs],
             'preprocessing_seed': preprocessing_seed,
             'preprocessing_rows': min(preprocessing_rows, total_count),

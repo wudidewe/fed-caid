@@ -27,6 +27,8 @@ from .revision_adaptation import (
     FIXED_BASE_MODE_DESCRIPTIONS,
     MATCHED_MODES,
     MODE_DESCRIPTIONS,
+    PORTABLE_FIXED_MODES,
+    PORTABLE_FIXED_THRESHOLD,
     THREAT_MODEL,
     AdapterClient,
     run_adapter_ablations,
@@ -40,12 +42,23 @@ from .revision_controlled import (
     plan_targets,
     remove_receiver_class,
 )
-from .revision_data import load_revision_data
+from .revision_data import _feature_keys, load_revision_data
+from .revision_detector_objective import GROUP_BALANCED, HARD_BENIGN, TREE_DISTILLATION, objective_settings
+from .revision_iov_binary import (
+    BINARY_GUARD_FLOOR, BINARY_GUARD_MODES, BINARY_HEAD_MODES, PORTABLE_BINARY_MODES, SUPPORT_BIN_COUNT,
+    binary_objective_settings,
+)
 from .revision_iov_diagnostics import DATASET as IOV_DATASET
 from .revision_iov_diagnostics import MODES as IOV_DIAGNOSTIC_MODES
 from .revision_iov_diagnostics import IoVOperatingDiagnostics, write_iov_diagnostics
+from .revision_iov_id_gate import ID_GATE_MODE, ID_GATE_RULE, SEEN_ID_THRESHOLD, UNSEEN_ID_THRESHOLD, TrainIdGate
+from .revision_iov_retrieval import NEIGHBORS, RETRIEVAL_WEIGHT, LocalTrainRetrieval
 from .revision_measurement import ResidentInference, Resources, benchmark_tcp
 from .revision_report import score, write_report
+from .revision_fixed_subtype import fixed_subtype_predictions
+from .revision_tree_alarm import (
+    TREE_ALARM_COUNT, TREE_ALARM_SUBTYPE_WEIGHT, TREE_FUSION_WEIGHT, LocalTreeScoreFusion, SharedTreeAlarm,
+)
 from .revision_supplement import (
     MIN_DONOR_ROWS,
     MIN_DONOR_TRAIN_ROWS,
@@ -79,6 +92,8 @@ SCALING = (
 SCALE_DATASETS = ('Car-Hacking', 'CIC-UNSW-NB15')
 SCALE_TRAIN_ROWS = 100000
 BALANCED_MODES = ('base', 'base_threshold', 'local_only', 'full')
+CLASS_CAL_GATES = ('matched_scalar', 'class_cal')
+CLASS_CAL_STAGES = {'base_threshold': 'base', 'local_only': 'local', 'full': 'full'}
 RUN_SOURCE = (
     'revision_run.py',
     'revision_data.py',
@@ -86,6 +101,12 @@ RUN_SOURCE = (
     'revision_baseline.py',
     'revision_fixed_subtype.py',
     'revision_iov_diagnostics.py',
+    'revision_iov_id_gate.py',
+    'revision_iov_binary.py',
+    'revision_iov_retrieval.py',
+    'revision_detector_objective.py',
+    'revision_distillation.py',
+    'revision_tree_alarm.py',
     'revision_report.py',
     'review_evidence.py',
     *SNAPSHOT_SUPPORT_FILES,
@@ -224,6 +245,26 @@ def _train_clients(
         development = {role: parts[role] for role in ('train', 'cal', 'val')}
         rows = {role: client[role] for role in development}
         node = PrivateClient(client_name, development, rows, names, features, args, scratch / client_name)
+        score_enhancer = None
+        started = time.perf_counter()
+        if getattr(args, 'tabm_train_retrieval', False):
+            score_enhancer = LocalTrainRetrieval(*node.parts['train'], len(names))
+        if getattr(args, 'tabm_tree_score_fusion', False):
+            raw_x = development['train'][0][rows['train']]
+            score_enhancer = LocalTreeScoreFusion(raw_x, node.parts['train'][1], len(names), args.seed + i)
+            del raw_x
+        if score_enhancer is not None:
+            node.performance['score_enhancement_fit_seconds'] = time.perf_counter() - started
+            started = time.perf_counter()
+            for role in node.probabilities:
+                raw_x = development[role][0][rows[role]]
+                node.probabilities[role] = score_enhancer(raw_x, node.parts[role][0], node.probabilities[role])
+            seconds = time.perf_counter() - started
+            node.performance['score_enhancement_inference_seconds'] = seconds
+            node.performance['inference_seconds'] += seconds
+            node.performance['inference_ms_per_sample'] = (
+                1000 * node.performance['inference_seconds'] / node.performance['inference_rows']
+            )
         head = None
         if with_subtype:
             head_started = time.perf_counter()
@@ -245,6 +286,8 @@ def _train_clients(
                 raw = parts['test'][0][test_indices[start : start + 32 * args.batch_size]]
                 transformed = node.transform(raw)
                 chunk_p = core.probabilities(core.log_prediction(model, transformed, args.device, args.batch_size))
+                if score_enhancer is not None:
+                    chunk_p = score_enhancer(raw, transformed, chunk_p)
                 chunks.append(chunk_p)
                 if head is not None:
                     head_inference_started = time.perf_counter()
@@ -265,7 +308,20 @@ def _train_clients(
             node.transform,
             parts['val'][0][client['val'][:1]],
             args.device,
+            **({'score_enhancer': score_enhancer} if score_enhancer is not None else {}),
         )
+        id_gate_masks = {}
+        if getattr(args, 'tabm_binary_head', None) == ID_GATE_MODE:
+            column = args.id_gate_feature_index
+            gate = TrainIdGate(parts['train'][0][client['train'], column])
+            id_gate_masks = {
+                'cal_id_seen': gate.seen(parts['cal'][0][client['cal'], column]),
+                'eval_id_seen': np.concatenate((
+                    gate.seen(parts['val'][0][client['val'], column]),
+                    gate.seen(parts['test'][0][test_indices, column]),
+                )),
+            }
+            node.performance['id_gate_training_id_count'] = gate.training_id_count
         inputs.append(
             AdapterClient(
                 node.probabilities['cal'],
@@ -274,6 +330,7 @@ def _train_clients(
                 node.log_prior,
                 probe,
                 cal_split=cal_splits[i] if cal_splits is not None else None,
+                **id_gate_masks,
             )
         )
         timings.append(
@@ -513,6 +570,104 @@ def _grouped_cal(parts, roster, args, enabled):
     return cal_group_splits(cal_x, cal_y, roster, args.cal_fit_fraction, args.seed)
 
 
+def _lock_portable_class_cal(cal_data, cal_rows, parent_splits, probabilities, args, directory):
+    """Fit and persist both threshold policies with only raw CAL rows, scores and labels."""
+    from .revision_operating_selection import _digest, split_operating_subsets
+    from .revision_portable_class_cal import select_portable_class_cal
+
+    x, labels = cal_data
+    clients = [{'cal': rows} for rows in cal_rows]
+    try:
+        nested, split_receipt = split_operating_subsets(x, labels, clients, parent_splits, seed=args.seed)
+    except InfeasibleDesign as exc:
+        # No valid independent selection subset. Both arms use the same parent CAL reference.
+        references = []
+        records = []
+        for rows, (_, holdout), p in zip(cal_rows, parent_splits, probabilities, strict=True):
+            cutoff, record = core.empirical_alarm_threshold(
+                p[holdout], labels[rows[holdout]], args.target_far, args.threshold_floor,
+                args.threshold_min_benign_rows, args.threshold_insufficient_policy,
+            )
+            references.append(cutoff)
+            records.append(record)
+        lock = {
+            'status': 'infeasible_nested_split', 'reason': str(exc), 'fallback': 'same parent CAL scalar in both arms',
+            'scalar_thresholds': references, 'class_thresholds': [
+                [value] * (p.shape[1] - 1) for value, p in zip(references, probabilities, strict=True)
+            ], 'parent_calibration': records,
+        }
+        lock['selection_sha256'] = _digest(lock)
+        split_receipt = None
+    else:
+        # Compute shared exact feature-group identities; locally re-numbered IDs would break the overlap check.
+        _, group_ids = np.unique(_feature_keys(x), return_inverse=True)
+        inputs = []
+        for rows, (_, holdout), p, selected in zip(cal_rows, parent_splits, probabilities, nested, strict=True):
+            entry = {}
+            for role, side in (('fit', 'threshold_fit'), ('select', 'operating_select')):
+                positions = holdout[selected[side]]
+                entry[f'{role}_probabilities'] = p[positions]
+                entry[f'{role}_labels'] = labels[rows[positions]]
+                entry[f'{role}_group_ids'] = group_ids[rows[positions]]
+            inputs.append(entry)
+        lock = select_portable_class_cal(inputs, target_far=args.target_far, floor=args.threshold_floor)
+    scope = {
+        'seed': args.seed, 'roles_used': ['cal_holdout'], 'nested_split': split_receipt, **lock,
+        'parent_holdout': [
+            {'rows': len(holdout), 'source_indices_sha256': sha256(np.asarray(rows[holdout], '<i8').tobytes()).hexdigest(),
+             'probabilities_sha256': sha256(np.asarray(p[holdout], '<f8').tobytes()).hexdigest(),
+             'labels_sha256': sha256(np.asarray(labels[rows[holdout]], '<i8').tobytes()).hexdigest()}
+            for rows, (_, holdout), p in zip(cal_rows, parent_splits, probabilities, strict=True)
+        ],
+    }
+    path = directory / 'class_calibration.json'
+    _atomic_json(path, scope)
+    return lock, core.sha(path)
+
+
+class _PortableClassCalObserver:
+    """Apply locked thresholds once per row and change subtypes only on shared alerts."""
+
+    def __init__(self, lock, lock_hash):
+        self.lock = lock
+        self.lock_hash = lock_hash
+        self.predictions, self.scores, self.calibration = {}, {}, []
+        self.raw_evidence = []
+
+    def observe(self, mode, index, p, _predicted):
+        from .revision_portable_class_cal import apply_portable_class_cal
+
+        stage = CLASS_CAL_STAGES.get(mode)
+        if stage is None:
+            return
+        for gate in CLASS_CAL_GATES:
+            base_mode = gate + '_base'
+            key = gate + '_' + stage
+            cutoff = self.lock['scalar_thresholds'][index] if gate == 'matched_scalar' else self.lock['class_thresholds'][index]
+            if stage == 'base':
+                result = (core.hierarchical_decisions(p, cutoff) if gate == 'matched_scalar'
+                          else apply_portable_class_cal(p, cutoff))
+                labels, scores = result['predicted'], result['attack_score']
+                self.raw_evidence.append({
+                    'client': index, 'mode': key, 'rows': len(labels), 'alerts': int(np.count_nonzero(labels)),
+                    'eval_attack_score_sha256': sha256(np.asarray(scores, '<f8').tobytes()).hexdigest(),
+                    'eval_alarm_sha256': sha256((labels > 0).tobytes()).hexdigest(),
+                })
+            else:
+                base = self.predictions[base_mode][index]
+                labels = fixed_subtype_predictions(base, p, range(1, p.shape[1]))
+                scores = self.scores[base_mode][index]
+            self.predictions.setdefault(key, []).append(labels)
+            self.scores.setdefault(key, []).append(scores)
+            self.calibration.append({
+                'mode': key, 'client': index, 'threshold_reference_mode': base_mode, 'subtype_source_mode': mode,
+                'calibration_rule': gate, 'threshold_source': 'locked CAL policy', 'class_calibration_sha256': self.lock_hash,
+                'calibration_status': self.lock['status'],
+                'threshold': cutoff if gate == 'matched_scalar' else None,
+                'threshold_by_predicted_attack': cutoff if gate == 'class_cal' else None,
+            })
+
+
 def _check_sampled_target(parts, roster, splits, target, receiver, args, classes):
     from .revision_conditional import select_fit_indices
 
@@ -549,6 +704,41 @@ def _run_case(
         'detector_objective': 'class_balanced' if scenario == 'balance' else 'prior_adjusted',
         'ple_boundary_policy': getattr(cli, 'ple_boundary_policy', 'clip_to_train_edges'),
     }
+    if getattr(cli, 'iov_hard_benign', False):
+        profile['detector_objective'] = HARD_BENIGN
+    portable = getattr(cli, 'portable_detector', None)
+    if getattr(cli, 'tabm_attention', False) or portable in PORTABLE_BINARY_MODES:
+        profile['tabm_attention'] = True
+    refinement = portable if portable in PORTABLE_BINARY_MODES else getattr(cli, 'tabm_refinement', None)
+    if portable:
+        profile.update(portable_detector=portable, fixed_alarm_threshold=PORTABLE_FIXED_THRESHOLD)
+    if refinement in ('group', 'group_id'):
+        profile['detector_objective'] = GROUP_BALANCED
+    if refinement == 'distillation':
+        profile['detector_objective'] = TREE_DISTILLATION
+    if refinement in BINARY_HEAD_MODES:
+        profile['tabm_binary_head'] = refinement
+        profile.update(binary_objective_settings(refinement))
+    if refinement in BINARY_GUARD_MODES:
+        profile['threshold_floor'] = BINARY_GUARD_FLOOR
+    if refinement == ID_GATE_MODE:
+        if not cli.smoke and 'ID' not in data.features:
+            raise ValueError('The grouped alarm requires a raw CAN ID feature')
+        profile.update(
+            id_gate_feature_index=0 if cli.smoke else list(data.features).index('ID'),
+            id_gate_rule=ID_GATE_RULE,
+            id_gate_threshold_seen=SEEN_ID_THRESHOLD,
+            id_gate_threshold_unseen=UNSEEN_ID_THRESHOLD,
+        )
+    if refinement in ('id', 'group_id'):
+        profile['tabm_can_id_robust'] = True
+        profile['can_id_mask_probability'] = core.CAN_ID_MASK_PROBABILITY
+    if refinement == 'retrieval':
+        profile.update(tabm_train_retrieval=True, retrieval_neighbors=NEIGHBORS, retrieval_weight=RETRIEVAL_WEIGHT)
+    if refinement == 'tree_fusion':
+        profile.update(
+            tabm_tree_score_fusion=True, tree_fusion_count=TREE_ALARM_COUNT, tree_fusion_weight=TREE_FUSION_WEIGHT,
+        )
     if cli.smoke:
         profile.update(base_epochs=1, adapter_epochs=1, rounds=1, batch_size=64)
     conditional = getattr(cli, 'conditional_adapter', False)
@@ -610,11 +800,20 @@ def _run_case(
         )
     quota_moves = rebalance_scale(roster, seed) if is_scale else {}
     cal_splits, cal_audit = _grouped_cal(parts, roster, args, getattr(cli, 'group_cal', False))
+    if portable:
+        for client, (_, holdout), record in zip(roster, cal_splits, cal_audit['clients'], strict=True):
+            rows = client['cal'][holdout]
+            benign_rows = rows[parts['cal'][1][rows] == 0]
+            record['holdout_benign_feature_groups'] = len(np.unique(_feature_keys(parts['cal'][0][benign_rows])))
     if cal_audit is not None:
         _atomic_json(directory / 'cal_group_split.json', cal_audit)
     fixed_base_alarm = getattr(cli, 'iov_fixed_base_alarm', False)
     iov_diagnostic = (
-        IoVOperatingDiagnostics(parts, roster, cal_splits, class_names=data.names, fixed_base_alarm=fixed_base_alarm)
+        IoVOperatingDiagnostics(
+            parts, roster, cal_splits, class_names=data.names, fixed_base_alarm=fixed_base_alarm,
+            can_id_strata=bool(refinement),
+            id_gate_column=profile.get('id_gate_feature_index'),
+        )
         if getattr(cli, 'iov_diagnostics', False)
         else None
     )
@@ -643,6 +842,12 @@ def _run_case(
     controlled_development = []
     cache_receipt = None
     iov_evidence = {}
+    class_cal_observer = None
+    teacher_records = []
+    tree_alarm = (
+        SharedTreeAlarm(parts, roster, cal_splits, args, len(data.names), directory / 'tree_calibration.json')
+        if getattr(cli, 'tree_alarm', False) else None
+    )
     prediction_cache = (
         PredictionCache(directory, data.names, parts, roster, development_only=development_only)
         if getattr(cli, 'cache_predictions', False)
@@ -659,6 +864,9 @@ def _run_case(
                 Path(scratch),
                 with_subtype=with_subtype,
                 cal_splits=cal_splits,
+                on_fitted_client=(
+                    lambda index, node: teacher_records.append({'client': index, **node.distillation_teacher})
+                ) if refinement == 'distillation' else None,
             )
             _atomic_json(
                 directory / 'ple_stability_private.json',
@@ -670,7 +878,47 @@ def _run_case(
             )
         if prediction_cache is not None:
             prediction_cache.local(adapter_inputs)
-        if scenario == 'balance':
+        if portable:
+            if getattr(cli, 'portable_class_cal', False):
+                lock, lock_hash = _lock_portable_class_cal(
+                    parts['cal'], [client['cal'] for client in roster], cal_splits,
+                    [client.cal_probabilities for client in adapter_inputs], args, directory,
+                )
+                class_cal_observer = _PortableClassCalObserver(lock, lock_hash)
+            predictions, q, diagnostics = run_adapter_ablations(
+                adapter_inputs, args, modes=BALANCED_MODES, portable_fixed_alarm=True,
+                observe_scores=class_cal_observer.observe if class_cal_observer else None,
+            )
+            shared_alarms = [
+                ('base_threshold', 'fixed_base_local', 'fixed_base_full'),
+                ('base_fixed070', 'fixed070_local', 'fixed070_full'),
+            ]
+            if class_cal_observer:
+                predictions.update(class_cal_observer.predictions)
+                q.update(class_cal_observer.scores)
+                diagnostics['calibration'].extend(class_cal_observer.calibration)
+                for gate in CLASS_CAL_GATES:
+                    shared_alarms.append(tuple(gate + '_' + stage for stage in ('base', 'local', 'full')))
+                for i in range(len(roster)):
+                    for gate in CLASS_CAL_GATES:
+                        if not np.array_equal(q[gate + '_base'][i], q['base_threshold'][i]):
+                            raise RuntimeError(f'Raw detector score changed under {gate} for client {i}')
+                    if lock['status'] != 'selected' and not np.array_equal(
+                        predictions['matched_scalar_base'][i], predictions['class_cal_base'][i],
+                    ):
+                        raise RuntimeError('A routed fallback changed the matched scalar decisions')
+            for base, local, full in shared_alarms:
+                alarms = []
+                for index, base_preds in enumerate(predictions[base]):
+                    mask = base_preds > 0
+                    for other in (local, full):
+                        if not np.array_equal(mask, predictions[other][index] > 0) or not np.array_equal(
+                            q[base][index], q[other][index],
+                        ):
+                            raise AssertionError(f'Portable detector scores or alarms changed in {other}')
+                    alarms.append(sha256(mask.tobytes()).hexdigest())
+                diagnostics.setdefault('fixed_alarm_sha256_by_client', {})[base] = alarms
+        elif scenario == 'balance':
             predictions, q, diagnostics = run_adapter_ablations(adapter_inputs, args, modes=BALANCED_MODES)
         elif is_transfer or is_temporal:
             if score_diagnostics_enabled:
@@ -693,9 +941,13 @@ def _run_case(
             predictions, q, diagnostics = run_adapter_ablations(
                 adapter_inputs,
                 args,
+                observe_scores=tree_alarm.observe if tree_alarm else None,
                 observe_operating=iov_diagnostic.observe if iov_diagnostic else None,
                 fixed_base_alarm=fixed_base_alarm,
             )
+        if tree_alarm is not None:
+            predictions.update(tree_alarm.predictions)
+            q.update(tree_alarm.scores)
         if is_quantization:
             _run_quantization(adapter_inputs, args, predictions, q, diagnostics)
         if conditional:
@@ -717,7 +969,7 @@ def _run_case(
                     data.names,
                 ):
                     development.append({'client': f'client_{i}', 'role': 'val', **row})
-        with_baseline = iov_diagnostic is None and (
+        with_baseline = not portable and iov_diagnostic is None and (
             scenario in ('main', 'scale_reference', 'balance') or is_temporal or repair
         )
         repair_clients = adapter_inputs if repair else None
@@ -777,14 +1029,16 @@ def _run_case(
         del predictions, q
     settings = {
         **profile,
-        **core.detector_objective_settings(args.detector_objective),
+        **objective_settings(args.detector_objective),
         'prime': PRIME,
         'probability_floor': 1e-12,
-        'detector_tabm_ensemble': 4,
+        'detector_tabm_ensemble': (
+            core.TABM_ATTENTION_ENSEMBLE_SIZE if profile.get('tabm_attention') else core.TABM_BASE_ENSEMBLE_SIZE
+        ),
         'detector_tabm_blocks': 2,
         'detector_tabm_width': 64,
         'detector_ple_embedding': 8,
-        'detector_ple_bins_max': 16,
+        'detector_ple_bins_max': SUPPORT_BIN_COUNT if refinement == 'binary_support_bins' else 16,
         'detector_cross_layers': 2,
         'detector_cross_rank': 16,
         'detector_tabm_dropout': 0.1,
@@ -815,6 +1069,23 @@ def _run_case(
         settings.update(cal_split_protocol='exact_feature_group', cal_split_audit=cal_audit)
     if iov_diagnostic is not None:
         settings.update(iov_diagnostics=True, fedavg_evaluated=False, iov_fixed_base_alarm=fixed_base_alarm)
+    if portable:
+        settings.update(fedavg_evaluated=False, train_sampling='all_rows')
+    if class_cal_observer:
+        lock = class_cal_observer.lock
+        changed = [int(np.count_nonzero(np.asarray(vector) != scalar))
+                   for vector, scalar in zip(lock['class_thresholds'], lock['scalar_thresholds'], strict=True)]
+        iov_evidence['portable_class_cal'] = {
+            'status': lock['status'], 'selection_sha256': lock.get('selection_sha256'),
+            'receipt': 'class_calibration.json', 'sha256': class_cal_observer.lock_hash,
+            'clients_with_different_route_cutoffs': sum(n > 0 for n in changed),
+            'changed_route_count_by_client': changed, 'role': 'val',
+            'val_identity_sha256': data.audit.get('source_identity_sha256_by_role', {}).get('val'),
+            'val_index_sha256_by_client': [sha256(np.asarray(c['val'], '<i8').tobytes()).hexdigest() for c in roster],
+            'evaluated': class_cal_observer.raw_evidence,
+        }
+    if tree_alarm is not None:
+        settings.update(tree_alarm_count=TREE_ALARM_COUNT, tree_subtype_weight=TREE_ALARM_SUBTYPE_WEIGHT)
     if is_transfer:
         train_rows_before = len(data.parts['train'][1])
         settings.update(
@@ -931,6 +1202,7 @@ def _run_case(
         ),
         **score_result,
         **iov_evidence,
+        **({'distillation_teacher_by_client': teacher_records} if teacher_records else {}),
         'development_subtype': development,
         'development_rank': diagnostics.get('development_class_diagnostics', []),
         'private_round_summary': diagnostics['private_rounds'] if is_quantization else [],
@@ -950,6 +1222,21 @@ def _run_case(
             + network
         ),
     }
+
+
+def grouped_validation_arguments(output, data_root, device, datasets, seeds, *, smoke=False):
+    """Configure the grouped TRAIN/CAL/VAL benchmark shared by detector comparisons."""
+    return [
+        '--dataset', *datasets,
+        '--protocol', 'grouped',
+        '--scenarios', 'main',
+        '--seeds', *map(str, seeds),
+        '--device', device,
+        '--data-root', str(data_root),
+        '--out', str(output),
+        '--group-cal', '--development-only', '--no-tcp', '--no-figures',
+        *(['--smoke'] if smoke else []),
+    ]
 
 
 def _parser(*, supplement=False):
@@ -1089,6 +1376,18 @@ def _parser(*, supplement=False):
             action='store_true',
             help='Observe existing IoV CAL/VAL gates in a grouped development run',
         )
+        p.add_argument('--iov-hard-benign', action='store_true', help='Try TRAIN-only hard benign weighting in IoV')
+        p.add_argument(
+            '--tabm-refinement',
+            choices=('group', 'id', 'group_id', 'retrieval', 'tree_fusion', 'distillation', *BINARY_HEAD_MODES),
+        )
+        p.add_argument(
+            '--portable-detector', choices=('reference', *PORTABLE_BINARY_MODES),
+            help='Paired grouped detector pilot with fixed 0.70 and local CAL alarms',
+        )
+        p.add_argument('--portable-class-cal', action='store_true',
+                       help='Compare matched scalar and class-routed CAL policies on binary_swa scores')
+        p.add_argument('--tree-alarm', action='store_true', help='Compare shared tree alarms with adapted TabM subtypes')
         p.add_argument(
             '--iov-fixed-base-alarm',
             action='store_true',
@@ -1096,6 +1395,7 @@ def _parser(*, supplement=False):
                 'Observe adapted attack subtypes while holding the original IoV TabM binary alarm and scores' ' fixed'
             ),
         )
+    p.add_argument('--tabm-attention', action='store_true', help='Use residual feature attention and eight TabM members')
     p.add_argument('--seeds', type=int, nargs='+')
     p.add_argument(
         '--group-cal',
@@ -1133,6 +1433,26 @@ def _validate_iov_diagnostics(cli):
     """Restrict the opt-in observer to the matched normal IoV development case."""
     if getattr(cli, 'iov_fixed_base_alarm', False) and not getattr(cli, 'iov_diagnostics', False):
         raise ValueError('--iov-fixed-base-alarm requires --iov-diagnostics')
+    if getattr(cli, 'iov_hard_benign', False) and not getattr(cli, 'iov_diagnostics', False):
+        raise ValueError('--iov-hard-benign requires --iov-diagnostics')
+    refinement = getattr(cli, 'tabm_refinement', None)
+    if getattr(cli, 'portable_class_cal', False) and getattr(cli, 'portable_detector', None) != 'binary_swa':
+        raise ValueError('--portable-class-cal requires --portable-detector binary_swa')
+    if getattr(cli, 'portable_detector', None) and (
+        cli.scenarios != 'main' or cli.protocol != 'grouped' or not cli.group_cal or not cli.development_only
+        or cli.tabm_attention or refinement or cli.iov_diagnostics or cli.iov_hard_benign or cli.tree_alarm
+        or cli.check_data or cli.cache_predictions
+    ):
+        raise ValueError('--portable-detector requires grouped main development only, group CAL and no other models')
+    if refinement and (not cli.tabm_attention or cli.iov_hard_benign or cli.tree_alarm):
+        raise ValueError('--tabm-refinement requires attention TabM without other detector candidates')
+    if refinement == 'distillation' and (
+        cli.protocol != 'grouped' or cli.scenarios != 'main' or not cli.group_cal
+        or cli.cache_predictions or cli.check_data
+    ):
+        raise ValueError('Distillation requires grouped main with group CAL and no predictions cache')
+    if refinement and refinement != 'distillation' and not cli.iov_diagnostics:
+        raise ValueError('--tabm-refinement requires focused attention IoV diagnostics without other candidates')
     if getattr(cli, 'iov_diagnostics', False) and (
         hasattr(cli, 'profile')
         or tuple(cli.dataset) != (IOV_DATASET,)
@@ -1170,6 +1490,11 @@ def execute(cli):
     Write case records, reports, and a completion receipt under the configured output directory.
     """
     _validate_iov_diagnostics(cli)
+    if getattr(cli, 'tree_alarm', False) and (
+        not cli.tabm_attention or cli.protocol != 'grouped' or cli.scenarios != 'main'
+        or not cli.group_cal or not cli.development_only or cli.check_data or cli.cache_predictions
+    ):
+        raise ValueError('--tree-alarm requires attention TabM and grouped main development-only with group CAL')
     supplement = hasattr(cli, 'profile')
     controlled = getattr(cli, 'profile', None) == 'controlled_transfer'
     transfer_profiles = ('transfer', 'controlled_transfer')
@@ -1314,8 +1639,55 @@ def execute(cli):
         'threat_model': THREAT_MODEL,
         **_objective_comparison(cases, cli.development_only),
     }
+    portable = getattr(cli, 'portable_detector', None)
+    if getattr(cli, 'tabm_attention', False) or portable in PORTABLE_BINARY_MODES:
+        config.update(tabm_attention=True, detector_tabm_ensemble=core.TABM_ATTENTION_ENSEMBLE_SIZE)
+    if portable:
+        config.update(portable_detector=portable, fedavg_evaluated=False, fixed_alarm_threshold=PORTABLE_FIXED_THRESHOLD)
+        config['mode_descriptions'] = {
+            **{mode: MODE_DESCRIPTIONS[mode] for mode in BALANCED_MODES},
+            **FIXED_BASE_MODE_DESCRIPTIONS,
+            **{label: f'Fixed 0.70 detector alarm with subtypes from {mode}' for mode, label in PORTABLE_FIXED_MODES.items()},
+        }
+        if getattr(cli, 'portable_class_cal', False):
+            config['portable_class_cal'] = True
+            config['class_calibration_scope'] = 'split the grouped CAL holdout for fitting and selecting before VAL decisions'
+            for filename in ('revision_portable_class_cal.py', 'revision_class_operating.py', 'revision_operating_selection.py'):
+                config['source_sha256'][filename] = core.sha(source_path(filename))
+            config['mode_descriptions'].update({
+                gate + '_' + stage: f'{gate} CAL alarm, attack subtypes from {source}'
+                for gate in CLASS_CAL_GATES for source, stage in CLASS_CAL_STAGES.items()
+            })
+    refinement = portable if portable in PORTABLE_BINARY_MODES else getattr(cli, 'tabm_refinement', None)
+    if refinement:
+        config['tabm_refinement'] = refinement
+    if refinement == 'distillation':
+        config['distillation'] = objective_settings(TREE_DISTILLATION)
+        for mode in ('base', 'base_threshold', 'local_only', 'full', 'fedavg', 'fedavg_threshold'):
+            config['mode_descriptions'][mode] += ' (student trained with local group-fold Extra Trees targets)'
+    if refinement in BINARY_HEAD_MODES:
+        config['tabm_binary_head'] = refinement
+        config['binary_objective'] = binary_objective_settings(refinement)
+        config['mode_descriptions']['base_threshold'] += ' (separate binary alarm output)'
+    if refinement in ('retrieval', 'tree_fusion'):
+        source = 'local TRAIN neighbors' if refinement == 'retrieval' else 'local 128-tree scores'
+        for mode in ('base', 'base_threshold', 'local_only', 'full'):
+            config['mode_descriptions'][mode] += f' (attention TabM probabilities blended with {source})'
+    if getattr(cli, 'tree_alarm', False):
+        config.update(tree_alarm_count=TREE_ALARM_COUNT, tree_subtype_weight=TREE_ALARM_SUBTYPE_WEIGHT)
+        config['mode_descriptions'].update(
+            tree_alarm='Local tree detector and subtype baseline',
+            tree_alarm_local='Tree alarm with tree and locally adapted TabM subtype scores',
+            tree_alarm_full='Tree alarm with tree and federated adapted TabM subtype scores',
+        )
     if getattr(cli, 'iov_diagnostics', False):
         config['iov_diagnostics'] = True
+        if getattr(cli, 'iov_hard_benign', False):
+            config['iov_detector_objective'] = objective_settings(HARD_BENIGN)
+        if refinement in ('group', 'group_id'):
+            config['iov_detector_objective'] = objective_settings(GROUP_BALANCED)
+        if refinement == 'distillation':
+            config['iov_detector_objective'] = objective_settings(TREE_DISTILLATION)
         config['iov_diagnostics_scope'] = {
             'modes': list(IOV_DIAGNOSTIC_MODES),
             'roles': ['cal_holdout', 'val'],
@@ -1328,6 +1700,15 @@ def execute(cli):
             config['mode_descriptions'].update(FIXED_BASE_MODE_DESCRIPTIONS)
             config['iov_diagnostics_scope']['modes'].extend(FIXED_BASE_MODE_DESCRIPTIONS)
             config['iov_diagnostics_scope']['fixed_alarm_reference'] = 'base_threshold'
+        if refinement == ID_GATE_MODE:
+            config['id_gate'] = {
+                'rule': ID_GATE_RULE,
+                'scope': 'fixed base alarms with local TRAIN CAN ID membership',
+                'seen_threshold': SEEN_ID_THRESHOLD,
+                'unseen_threshold': UNSEEN_ID_THRESHOLD,
+                'cal_or_val_fitting': False,
+            }
+            config['mode_descriptions']['base_threshold'] = 'Binary alarm with fixed cutoffs by local TRAIN CAN ID membership'
     if (
         cli.development_only
         or cli.group_cal

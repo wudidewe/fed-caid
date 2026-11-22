@@ -7,7 +7,7 @@ from statistics import mean
 
 from .experiment_config import DATASETS
 from .revision_report import write_csv
-from .revision_run import SEEDS
+from .revision_run import SEEDS, grouped_validation_arguments
 from .revision_run import main as run_revision_matrix
 from .revision_v12 import _bindings, _output_lock, _read
 
@@ -23,33 +23,6 @@ BASELINE_SOURCES = (
     'communication.csv',
 )
 COMMUNICATION_MODES = {'full': 'full', 'fedavg_threshold': 'fedavg'}
-
-
-def _arguments(output, data_root, device, seeds, smoke):
-    """Configure all datasets through the same native evaluator and data protocol."""
-    return [
-        '--dataset',
-        *DATASETS,
-        '--protocol',
-        'grouped',
-        '--scenarios',
-        'main',
-        '--seeds',
-        *map(str, seeds),
-        '--device',
-        device,
-        '--data-root',
-        str(data_root),
-        '--out',
-        str(output),
-        '--group-cal',
-        '--development-only',
-        '--threshold-insufficient-policy',
-        'disable',
-        '--no-tcp',
-        '--no-figures',
-        *(['--smoke'] if smoke else []),
-    ]
 
 
 def _rows(root, name):
@@ -292,11 +265,19 @@ def run_benchmark_matrix(output, project, *, device='auto', smoke=False):
 def _run_benchmark_locked(output, dataset_root, device, smoke):
     """Train and finalize the benchmark while holding its output lock."""
     seeds = (SEEDS[0],) if smoke else SEEDS
-    if run_revision_matrix(_arguments(output, dataset_root, device, seeds, smoke)) != 0:
+    arguments = grouped_validation_arguments(output, dataset_root, device, DATASETS, seeds, smoke=smoke)
+    arguments.extend(('--threshold-insufficient-policy', 'disable'))
+    if run_revision_matrix(arguments) != 0:
         raise RuntimeError('Four-dataset grouped benchmark did not finish')
     expected = len(DATASETS) * len(seeds)
     if _read(output / 'complete.json') != {'replicates': expected, 'data_audits': len(DATASETS)}:
         raise ValueError('The benchmark matrix did not complete every declared case')
+    config = _read(output / 'run.json')
+    if (
+        config.get('tabm_attention') or 'tree_alarm_count' in config
+        or config.get('tabm_refinement') or config.get('portable_detector')
+    ):
+        raise ValueError('The benchmark detector differs from the requested model')
     _baseline_table(output)
     _paired_table(output, seeds)
     return {

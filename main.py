@@ -8,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory, mkdtemp
 
 from src import (
+    revision_alarm_comparison,
     revision_benchmark_matrix,
     revision_final_review,
     revision_fresh_report,
@@ -55,6 +56,7 @@ def _add_modes(parser):
     mode.add_argument('--hulk-2018', type=Path, metavar='RUN',
                       help='Run the 2018 study with a completed full review run and its frozen Hulk models')
     mode.add_argument('--iov-review', action='store_true', help='Run the fresh five-seed fixed-alarm IoV ablation')
+    mode.add_argument('--class-cal-diagnostics', action='store_true', help='Reproduce the four-dataset CAL threshold comparison')
     mode.add_argument('--nb15-low-far', action='store_true', help='Run the five-seed NB15 TabM weight comparison')
     mode.add_argument('--nb15-threshold', action='store_true', help='Run the five-seed NB15 CAL-threshold comparison')
     mode.add_argument('--local-evidence', action='store_true', help='Summarize verified local evidence')
@@ -75,6 +77,7 @@ def _validate_args(parser, args):
     local_mode = (
         args.collector
         or args.iov_review
+        or args.class_cal_diagnostics
         or args.nb15_low_far
         or args.nb15_threshold
         or args.local_evidence
@@ -233,7 +236,11 @@ def _smoke():
 
 def _smoke_suite(root):
     """Exercise the benchmark and each supplementary experiment after the base cases."""
-    revision_benchmark_matrix.run_benchmark_matrix(root / 'benchmark_matrix', PROJECT, device='cpu', smoke=True)
+    benchmark = root / 'benchmark_matrix'
+    revision_benchmark_matrix.run_benchmark_matrix(benchmark, PROJECT, device='cpu', smoke=True)
+    revision_alarm_comparison.run_alarm_comparison(
+        root / 'alarm_comparison', PROJECT, device='cpu', smoke=True, reference=benchmark, primary=True,
+    )
     result = revision_final_review.run_iov_review(root, device='cpu', smoke=True)
     if result:
         return result
@@ -292,6 +299,9 @@ def _run_utility(args):
 
 def _run_focused(args):
     """Dispatch one real study after validating its dataset layout."""
+    if args.class_cal_diagnostics:
+        _require_data(_dataset_files(DATASETS)[1])
+        return revision_alarm_comparison.main([])
     if args.iov_review:
         _require_data(_dataset_files(('CIC-IoV-2024',))[1])
         return revision_final_review.run_iov_review(PROJECT)
@@ -310,7 +320,7 @@ def _run(args):
     result = _run_utility(args)
     if result is not None:
         return result
-    if args.iov_review or args.nb15_low_far or args.nb15_threshold:
+    if any((args.iov_review, args.class_cal_diagnostics, args.nb15_low_far, args.nb15_threshold)):
         return _run_focused(args)
     return _full_review(args)
 

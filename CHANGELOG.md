@@ -2,6 +2,9 @@
 
 ## Unreleased — consolidated review workflow
 
+- Run dual head TabM with client scalar CAL as the primary benchmark on four
+  datasets. Report matched local and federated subtype controls, fixed 0.70
+  threshold sensitivity and the original TabM reference separately.
 - Use root `main.py` for full review, synthetic check, focused experiments,
   continuation and report export.
 - Run a fresh review when all inputs are present and list missing inputs
@@ -17,7 +20,8 @@
   exploratory run can select independent client streams.
 - Include both NB15 detector weight and CAL threshold studies in the full review.
 - Retain original evidence receipts and write the new workflow under `outputs/fedcaid_review`.
-- Move retired launchers and historical runner source to a separate archive.
+- Remove retired standalone pilot launchers and use the shared grouped
+  validation configuration for the main and reference experiments.
 - Check the bundled reports, synthetic CPU experiment and installed wheel from the current source.
 
 ## Unreleased - experimental revision v11.1

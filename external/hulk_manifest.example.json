@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "dataset": "CIC-IDS-2017",
+  "target_class": "DoS Hulk",
+  "attestation": {
+    "custodian": "<actual capture custodian>",
+    "unseen_in_development": false
+  },
+  "exact_overlap_policy": "reject",
+  "captures": [
+    {
+      "capture_id": "<unique independent acquisition ID>",
+      "prepared_csv": "<relative or absolute path to prepared capture CSV>",
+      "sha256": "<SHA256 of prepared CSV>",
+      "raw_files": [
+        {
+          "path": "<relative or absolute path to original capture file>",
+          "sha256": "<SHA256 of original capture file>"
+        }
+      ]
+    }
+  ],
+  "criteria": {
+    "min_target_f1_effect_pp": 1.0,
+    "max_far": 0.01,
+    "max_far_increase": 0.001,
+    "max_fnr_increase": 0.005,
+    "min_target_groups": 5,
+    "min_benign_groups": 5,
+    "min_seeds": 5,
+    "min_captures": 1,
+    "min_target_f1_over_base_pp": 1.0,
+    "max_macro_f1_loss_pp": 1.0
+  }
+}

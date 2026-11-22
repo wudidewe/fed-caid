@@ -18,9 +18,11 @@ import numpy as np
 import torch
 
 from . import utils as core
+from .revision_iov_binary import BinaryAlarmTabM, make_binary_alarm_model
 
 SCHEMA = 'fedcaid_raw_cross_tabm_v1'
 MODEL_KIND = 'ple_cross'
+BINARY_MODEL_KIND = 'ple_cross_binary_alarm'
 INFERENCE_RULE = 'mean_ensemble_probability_without_prior_offset'
 
 
@@ -47,13 +49,18 @@ def save_tabm_checkpoint(path, node, *, batch_size=1024, inference_device='cpu')
     path = Path(path).resolve()
     payload = {
         'schema': SCHEMA,
-        'model_kind': MODEL_KIND,
+        'model_kind': BINARY_MODEL_KIND if isinstance(node.model, BinaryAlarmTabM) else MODEL_KIND,
         'inference_rule': INFERENCE_RULE,
         'client_id': node.client_id,
         'class_names': list(node.names),
         'feature_names': list(node.features),
         'ple_boundary_policy': node.model.ple_boundary_policy,
         'ple_boundary_version': core.PLE_BOUNDARY_VERSION,
+        **({'feature_attention': True} if node.model.feature_attention is not None else {}),
+        **(
+            {'can_id_values': node.model.can_id_values.detach().cpu().clone()}
+            if node.model.can_id_values is not None else {}
+        ),
         'bins': [value.detach().cpu().clone() for value in node.bins],
         'transform': {
             'median': torch.as_tensor(node.transform.median, dtype=torch.float32).clone(),
@@ -89,10 +96,12 @@ def _validate(payload, names, features):
     if (
         not isinstance(payload, dict)
         or payload.get('schema') != SCHEMA
-        or payload.get('model_kind') != MODEL_KIND
+        or payload.get('model_kind') not in (MODEL_KIND, BINARY_MODEL_KIND)
+        or (payload.get('model_kind') == BINARY_MODEL_KIND and payload.get('feature_attention') is not True)
         or payload.get('inference_rule') != INFERENCE_RULE
         or payload.get('ple_boundary_version') != core.PLE_BOUNDARY_VERSION
         or payload.get('ple_boundary_policy') not in core.PLE_BOUNDARY_POLICIES
+        or type(payload.get('feature_attention', False)) is not bool
     ):
         raise ValueError('Unrecognized frozen raw TabM model schema or boundary policy')
     classes, inputs = payload.get('class_names'), payload.get('feature_names')
@@ -103,6 +112,17 @@ def _validate(payload, names, features):
     ):
         raise ValueError('Frozen TabM class or feature order differs')
     width = len(inputs)
+    if 'can_id_values' in payload:
+        values = payload['can_id_values']
+        if (
+            not isinstance(values, torch.Tensor)
+            or values.ndim != 1
+            or not len(values)
+            or not _finite_vector(values, len(values), torch.float32)
+            or not bool((values.diff() > 0).all())
+            or not bool((values.abs() <= 12).all())
+        ):
+            raise ValueError('Invalid frozen TabM TRAIN CAN ID values')
     transform = payload.get('transform')
     if (
         not isinstance(transform, dict)
@@ -222,7 +242,11 @@ def load_tabm_checkpoint(path, *, expected_sha256=None, names=None, features=Non
             MODEL_KIND,
             bins=payload['bins'],
             ple_boundary_policy=payload['ple_boundary_policy'],
+            feature_attention=payload.get('feature_attention', False),
+            can_id_training=payload.get('can_id_values'),
         )
+        if payload['model_kind'] == BINARY_MODEL_KIND:
+            model = make_binary_alarm_model(model, payload['bins'])
     state = payload['state']
     expected = model.state_dict()
     if expected.keys() != state.keys() or any(

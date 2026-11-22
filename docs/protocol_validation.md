@@ -44,22 +44,9 @@ validation.
 
 ## User-controlled LAN endpoints
 
-To include the optional LAN measurement in a full review run, create
-`external/` locally and save the following as `external/lan_manifest.json`.
-Replace the example values with the actual orchestrator, collector hosts and
-endpoints. The declaration stays outside Git.
-
-```json
-{
-  "version": 1,
-  "topology": "Replace with the actual switch or Wi-Fi link and measured network conditions",
-  "orchestrator": {"physical_host_id": "replace-orchestrator", "os": "replace", "cpu": "replace", "ram": "replace"},
-  "collector_a": {"physical_host_id": "replace-collector-a", "os": "replace", "cpu": "replace", "ram": "replace", "endpoint": "192.168.1.21:8761"},
-  "collector_b": {"physical_host_id": "replace-collector-b", "os": "replace", "cpu": "replace", "ram": "replace", "endpoint": "192.168.1.22:8762"}
-}
-```
-
-Start the two collectors using the commands below with
+For a full review run, copy `external/lan_manifest.example.json` to
+`external/lan_manifest.json` and record the actual orchestrator, two collector
+hosts and endpoints. Start the two collectors using the commands below with
 `--sessions 6` for the two head dimensions (1,035 and 690), then run
 `main.py` on the orchestrator with the benchmark data ready. Each dimension measures 30 rounds at 3, 5 and 10
 logical clients. `--lan-manifest` selects another declaration, while
@@ -79,7 +66,7 @@ python main.py --collector --bind COLLECTOR_A_LAN_IP --port 8761 --sessions 6 --
 python main.py --collector --bind COLLECTOR_B_LAN_IP --port 8762 --sessions 6 --timeout 60
 ```
 
-On the benchmark orchestrator, select the **FedCAID** run configuration with the LAN manifest in place.
+On the benchmark orchestrator, run the root `main.py` with the LAN manifest in place.
 
 `--sessions` must match the number of declared benchmark connections. The
 collector exits successfully after that many sessions with at least one
@@ -96,7 +83,16 @@ run on each host. Packet-capture bytes, if measured, need a separate field and
 must not be confused with the application-byte counter. No multi-host result is
 claimed by the implementation or the default local test.
 
-## Reproduction check
+## Regression tests
 
-The synthetic integration suite can be run with `python main.py --smoke`.
-The protocol checks describe behavior within the stated trust assumptions.
+```text
+python -m unittest discover -s tests -p test_revision_protocol_validation.py -v
+```
+
+The tests check real local TCP round equivalence, incomplete-roster failure,
+bounded framing, duplicate/stale/invalid shares, and existing local-IPC failure
+contracts including worker exit and deterministic timeout handling. Existing
+`test_revision_adaptation.py` supplies exhaustive toy-field single-share
+uniformity and missing-client failure tests. Together these provide executable
+evidence for the stated construction and failure behavior; they are not a
+cryptographic audit or proof of malicious-party security.

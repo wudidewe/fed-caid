@@ -48,8 +48,8 @@ For an absolute operating requirement, add `min_absolute_target_f1` or `min_abso
 
 ## Seal, then confirm
 
-Fill in the [Hulk manifest example](external_preflight.md#hulk-manifest-example)
-and save it locally as `external/hulk_manifest.json`. With the benchmark data in place, run
+Complete the [Hulk manifest](../external/hulk_manifest.example.json) and save it
+as `external/hulk_manifest.json`. With the benchmark data in place, run
 [main.py](../main.py).
 The entry locates the five version-7 frozen bundles through the attribution receipt,
 validates the manifest, seals the declared plan and then runs confirmation.

@@ -28,6 +28,9 @@ CLASS_BALANCE_POWER = 0.25
 CLASS_BALANCE_MAX_RATIO = 8.0
 PLE_BOUNDARY_POLICIES = ('clip_to_train_edges', 'extrapolate')
 PLE_BOUNDARY_VERSION = 'train_edges_v1'
+TABM_BASE_ENSEMBLE_SIZE = 4
+TABM_ATTENTION_ENSEMBLE_SIZE = 8
+CAN_ID_MASK_PROBABILITY = 0.10
 
 
 class LowRankCross(nn.Module):
@@ -51,7 +54,10 @@ class LowRankCross(nn.Module):
 class CrossTabM(nn.Module):
     """Shared numerical embedding -> two rank16 crosses -> unchanged TabM."""
 
-    def __init__(self, base, bins=None, *, ple_boundary_policy='clip_to_train_edges'):
+    def __init__(
+        self, base, bins=None, *, ple_boundary_policy='clip_to_train_edges', feature_attention=False,
+        can_id_training=None,
+    ):
         super().__init__()
         if base.num_module is None or base.cat_module is not None:
             raise ValueError('CrossTabM requires numeric PLE input only')
@@ -75,6 +81,20 @@ class CrossTabM(nn.Module):
         # Additional parameters must not change the base/dropout RNG stream.
         with torch.random.fork_rng(devices=[]):
             self.cross_layers = nn.ModuleList([LowRankCross(self.width, 16) for _ in range(2)])
+            self.feature_attention = (
+                nn.MultiheadAttention(embedding_width, num_heads=2, batch_first=True) if feature_attention else None
+            )
+            if self.feature_attention is not None:
+                self.attention_norm = nn.LayerNorm(embedding_width)
+                self.attention_scale = nn.Parameter(torch.tensor(0.1))
+        if can_id_training is None:
+            self.register_buffer('can_id_values', None, persistent=False)
+        else:
+            values = torch.as_tensor(can_id_training, dtype=torch.float32, device='cpu')
+            if values.ndim != 1 or not len(values) or not bool(torch.isfinite(values).all()):
+                raise ValueError('CAN ID masking requires finite TRAIN identifiers')
+            self.register_buffer('can_id_values', values.unique(sorted=True), persistent=False)
+            self.unknown_can_id_token = nn.Parameter(torch.zeros(embedding_width))
 
     def apply_cross(self, original):
         """Apply the cross layers to the original embedded features and return the resulting tensor."""
@@ -89,11 +109,29 @@ class CrossTabM(nn.Module):
             return torch.maximum(torch.minimum(x, self.ple_train_upper), self.ple_train_lower)
         return x
 
+    def _embed(self, x):
+        """Apply residual attention across the numeric feature tokens of each record."""
+        tokens = self.base.num_module(self.prepare_ple_input(x))
+        if self.can_id_values is not None:
+            ids = x[:, 0].contiguous()
+            at = torch.searchsorted(self.can_id_values, ids).clamp_max(len(self.can_id_values) - 1)
+            # Preprocessing clips at 12, where distinct raw IDs may become indistinguishable.
+            unknown = (self.can_id_values[at] != ids) | (ids.abs() >= 12)
+            if self.training:
+                unknown = unknown | (torch.rand(len(ids), device=ids.device) < CAN_ID_MASK_PROBABILITY)
+            first = torch.where(unknown[:, None], self.unknown_can_id_token, tokens[:, 0, :])
+            tokens = torch.cat((first[:, None, :], tokens[:, 1:, :]), dim=1)
+        if self.feature_attention is not None:
+            normalized = self.attention_norm(tokens)
+            attended, _ = self.feature_attention(normalized, normalized, normalized, need_weights=False)
+            tokens = tokens + self.attention_scale * attended
+        return tokens.flatten(1)
+
     def forward(self, x):
         """Return per member class logits for a matrix of numerical feature rows."""
         if x.ndim != 2 or x.shape[1] != self.input_features:
             raise ValueError('CrossTabM requires a 2D numerical feature matrix')
-        embedded = self.base.num_module(self.prepare_ple_input(x)).flatten(1)
+        embedded = self._embed(x)
         hidden = self.base.backbone(self.base.ensemble_view(self.apply_cross(embedded)))
         return self.base.output(hidden)
 
@@ -102,7 +140,7 @@ class CrossTabM(nn.Module):
         """Return cross layer size, parameter norms and mean relative residual for the supplied input without
         gradients.
         """
-        embedded = self.base.num_module(self.prepare_ple_input(x)).flatten(1)
+        embedded = self._embed(x)
         crossed = self.apply_cross(embedded)
         return {
             'layers': 2,
@@ -298,13 +336,18 @@ class Transform:
         return obj
 
 
-def make_model(d, classes, kind, x=None, bins=None, *, ple_boundary_policy='clip_to_train_edges'):
+def make_model(
+    d, classes, kind, x=None, bins=None, *, ple_boundary_policy='clip_to_train_edges', feature_attention=False,
+    can_id_training=None,
+):
     """Build a detector with the declared feature and class counts, and return the model and its embedding bins.
 
     Reuse supplied bins or fit them on numerical TRAIN inputs. The boundary policy governs later scoring.
     """
     if kind not in NEURAL_KINDS:
         raise ValueError('Unknown neural model')
+    if type(feature_attention) is not bool:
+        raise ValueError('Feature attention must be a boolean setting')
 
     if bins is None:
         if x is None or x.ndim != 2 or len(x) < 2 or not np.isfinite(x).all():
@@ -323,11 +366,14 @@ def make_model(d, classes, kind, x=None, bins=None, *, ple_boundary_policy='clip
         d_out=classes,
         n_blocks=2,
         d_block=64,
-        k=4,
+        k=TABM_ATTENTION_ENSEMBLE_SIZE if feature_attention else TABM_BASE_ENSEMBLE_SIZE,
         dropout=0.1,
         num_embeddings=PiecewiseLinearEmbeddings(bins, d_embedding=8, activation=False, version='B'),
     )
-    return CrossTabM(model, bins, ple_boundary_policy=ple_boundary_policy), bins
+    return CrossTabM(
+        model, bins, ple_boundary_policy=ple_boundary_policy, feature_attention=feature_attention,
+        can_id_training=can_id_training,
+    ), bins
 
 
 def class_weights(y, classes=None, *, max_ratio=None):

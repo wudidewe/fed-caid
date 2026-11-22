@@ -10,11 +10,33 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch import nn
+from torch.optim.swa_utils import AveragedModel
 
 from . import utils as core
 from ._iov_layout import project_root
 from .privacy_core import ClassScoreAdapter, fit_class_adapter
-from .revision_detector_objective import LOSS_NAMES, objective_class_weights, objective_settings, training_losses
+from .revision_detector_objective import (
+    LOSS_NAMES,
+    objective_class_weights,
+    objective_distillation_targets,
+    objective_row_weights,
+    objective_settings,
+    training_losses,
+)
+from .revision_iov_binary import (
+    BINARY_HEAD_MODES,
+    BINARY_RECALL_MARGIN,
+    BINARY_SWA_EPOCHS,
+    BINARY_SWA_MODES,
+    PORTABLE_BINARY_MODES,
+    binary_alarm_losses,
+    binary_group_rank_loss,
+    binary_group_row_weights,
+    binary_train_groups,
+    conditional_attack_loss,
+    make_binary_alarm_model,
+    support_quantile_bins,
+)
 from .utils import (
     cached_train_log_prior,
     empirical_alarm_threshold,
@@ -40,7 +62,8 @@ class PrivateClient:
         preprocessing_started = time.perf_counter()
         training_seed = getattr(args, 'training_seed', None)
         training_seed = args.seed if training_seed is None else training_seed
-        core.seed(training_seed + int(client_id.rsplit('_', 1)[1]))
+        client_seed = training_seed + int(client_id.rsplit('_', 1)[1])
+        core.seed(client_seed)
         # Both normalization and PLE quantiles are fitted on LOCAL TRAIN only.
         raw = parts['train'][0][rows['train']]
         self.transform = core.Transform().fit(raw, neural=True)
@@ -52,15 +75,32 @@ class PrivateClient:
             'upload_total_seconds': 0.0,
         }
         self.private_upload_diagnostics = []
+        self.detector_objective = getattr(args, 'detector_objective', 'prior_adjusted')
+        self.binary_head = getattr(args, 'tabm_binary_head', None)
+        if self.binary_head is not None:
+            if self.binary_head not in BINARY_HEAD_MODES or self.detector_objective != 'prior_adjusted':
+                raise ValueError('A binary alarm head requires a known mode and prior-adjusted class cross entropy')
+            self.performance['tabm_binary_head'] = self.binary_head
+        binary_tail = self.binary_head == 'binary_tail'
+        binary_recall_margin = BINARY_RECALL_MARGIN if self.binary_head == 'binary_swa_recall' else 0.0
         training_started = time.perf_counter()
+        can_id_kwargs = (
+            {'can_id_training': self.parts['train'][0][:, 0]} if getattr(args, 'tabm_can_id_robust', False) else {}
+        )
         model, self.bins = core.make_model(
             len(features),
             len(names),
             'ple_cross',
             x=self.parts['train'][0],
+            bins=support_quantile_bins(self.parts['train'][0]) if self.binary_head == 'binary_support_bins' else None,
             ple_boundary_policy=getattr(args, 'ple_boundary_policy', 'clip_to_train_edges'),
+            feature_attention=getattr(args, 'tabm_attention', False),
+            **can_id_kwargs,
         )
+        if self.binary_head is not None:
+            model = make_binary_alarm_model(model, self.bins)
         self.model = model.to(args.device)
+        averaged = AveragedModel(model) if self.binary_head in BINARY_SWA_MODES else None
         self.parameter_count = sum(p.numel() for p in model.parameters())
         optimizer = torch.optim.AdamW(
             model.parameters(),
@@ -69,17 +109,34 @@ class PrivateClient:
         )
         x, y = self.parts['train']
         self.log_prior = cached_train_log_prior(y, len(names))
-        self.detector_objective = getattr(args, 'detector_objective', 'prior_adjusted')
         self.train_class_weights = objective_class_weights(y, len(names), self.detector_objective)
         loss_weights = (
             None
             if self.train_class_weights is None
             else torch.as_tensor(self.train_class_weights, dtype=torch.float32, device=args.device)
         )
+        row_weights = (
+            binary_group_row_weights(raw, y) if binary_tail
+            else objective_row_weights(raw, y, len(names), self.detector_objective)
+        )
+        rank_groups = binary_train_groups(raw) if self.binary_head == 'binary_swa_rank' else None
+        if row_weights is not None:
+            row_weights = torch.as_tensor(row_weights, device=args.device)
+        teacher, self.distillation_teacher = objective_distillation_targets(
+            raw, y, len(names), self.detector_objective, client_seed,
+        )
+        if teacher is not None:
+            teacher = tuple(torch.as_tensor(target, device=args.device) for target in teacher)
+            self.performance.update({
+                key: value for key, value in self.distillation_teacher.items()
+                if isinstance(value, (bool, int, float))
+            })
+        del raw
         self.prior_strength = args.prior_strength
         prior_offset = args.prior_strength * torch.as_tensor(self.log_prior, dtype=torch.float32, device=args.device)
         rng = np.random.default_rng(training_seed + 79)
         self.training_history = []
+        student_started = time.perf_counter() if teacher is not None else None
         for epoch in range(args.base_epochs):
             epoch_started = time.perf_counter()
             total_loss = torch.zeros((), dtype=torch.float64, device=args.device)
@@ -91,7 +148,21 @@ class PrivateClient:
                 optimizer.zero_grad(set_to_none=True)
                 logits = model(torch.as_tensor(x[at], device=args.device))
                 labels = torch.as_tensor(y[at], device=args.device)
-                loss = training_losses(logits, labels, prior_offset, loss_weights, self.detector_objective).mean()
+                batch_weights = None if row_weights is None else row_weights[at]
+                batch_teacher = None if teacher is None else tuple(target[at] for target in teacher)
+                losses = training_losses(
+                    logits, labels, prior_offset, loss_weights, self.detector_objective, row_weights=batch_weights,
+                    teacher=batch_teacher,
+                )
+                if self.binary_head is not None:
+                    losses = losses + binary_alarm_losses(
+                        logits, labels, tail=binary_tail, row_weights=batch_weights, positive_margin=binary_recall_margin,
+                    )
+                loss = losses.mean()
+                if self.binary_head == 'binary_swa_subtype':
+                    loss = loss + conditional_attack_loss(logits, labels)
+                if rank_groups is not None:
+                    loss = loss + binary_group_rank_loss(logits, y[at], rank_groups[at])
                 loss.backward()
                 gradient_norm = nn.utils.clip_grad_norm_(model.parameters(), 5)
                 finite_monitor.observe(loss, gradient_norm)
@@ -120,12 +191,22 @@ class PrivateClient:
                 'loss_and_gradient_finite': True,
             }
             self.training_history.append(history)
+            if averaged is not None and epoch >= args.base_epochs - BINARY_SWA_EPOCHS:
+                averaged.update_parameters(model)
             print(
                 f'LOCAL {self.client_id}: epoch {epoch + 1}/{args.base_epochs}, '
                 f"TRAIN={len(y):,}, loss={history['training_loss']:.6f}, seconds={history['seconds']:.1f}",
                 flush=True,
             )
-        self.performance['detector_training_seconds'] = time.perf_counter() - training_started
+        if averaged is not None:
+            model.load_state_dict(averaged.module.state_dict(), strict=True)
+            self.performance['binary_averaged_epoch_count'] = int(averaged.n_averaged)
+            del averaged
+        training_finished = time.perf_counter()
+        self.performance['detector_training_seconds'] = training_finished - training_started
+        if student_started is not None:
+            self.performance['distillation_student_training_seconds'] = training_finished - student_started
+        del teacher
         self.performance['optimizer_steps'] = args.base_epochs * math.ceil(len(y) / args.batch_size)
         self.performance['training_row_visits'] = args.base_epochs * len(y)
         self.performance['training_rows_per_second'] = self.performance['training_row_visits'] / max(
@@ -205,6 +286,8 @@ class PrivateClient:
         """Personalize the supplied global vector, calibrate the alarm threshold and write the local checkpoint and
         diagnostics. Return the VAL metrics.
         """
+        if self.binary_head is not None and self.binary_head not in PORTABLE_BINARY_MODES:
+            raise ValueError('This focused binary alarm candidate is supported for in-memory evaluation only')
         adapter = ClassScoreAdapter(len(self.names))
         if self.last_fit_initial is not None and np.array_equal(global_vector, self.last_fit_initial):
             local_vector = self.last_fit_vector
@@ -247,6 +330,7 @@ class PrivateClient:
                 'prior_strength': self.prior_strength,
                 'loss': LOSS_NAMES[self.detector_objective],
                 **objective_settings(self.detector_objective),
+                **self.distillation_teacher,
             },
         )
         np.savez(
@@ -255,37 +339,62 @@ class PrivateClient:
             threshold=self.threshold_cal_rows,
         )
         np.savez_compressed(self.directory / 'partition_private.npz', **self.rows)
+        self.save_detector_checkpoint(
+            self.directory / 'detector_private.pt', self.final_local_vector, self.alarm_threshold,
+            global_vector=global_vector,
+        )
+        return metrics
+
+    def save_detector_checkpoint(self, path, adapter_vector, threshold, *, fixed_base_alarm=False, global_vector=None):
+        """Save a fitted detector, adapter and scalar alarm policy without refitting."""
+        if self.binary_head is not None and self.binary_head not in PORTABLE_BINARY_MODES:
+            raise ValueError('Only portable binary heads can be exported')
+        if not np.isscalar(threshold) or not 0 <= threshold <= 1:
+            raise ValueError('A finite scalar threshold in [0, 1] is required')
+        adapter_vector = np.asarray(adapter_vector)
+        global_vector = None if global_vector is None else np.asarray(global_vector)
+        for vector in (adapter_vector, global_vector):
+            if vector is not None and (vector.shape != (len(self.names) - 1,) or not np.isfinite(vector).all()):
+                raise ValueError('A finite adapter vector with K-1 components is required')
         torch.save(
             {
                 'state': self.model.state_dict(),
                 'bins': self.bins,
+                **({'feature_attention': True} if self.model.feature_attention is not None else {}),
+                **({'binary_head': self.binary_head} if self.binary_head is not None else {}),
+                **({'fixed_base_alarm': True} if fixed_base_alarm else {}),
+                **({'can_id_values': self.model.can_id_values} if self.model.can_id_values is not None else {}),
                 'ple_boundary_policy': self.model.ple_boundary_policy,
                 'ple_boundary_version': core.PLE_BOUNDARY_VERSION,
                 'transform': self.transform.state(),
                 'class_names': self.names,
                 'feature_names': self.features,
-                'framework_version': getattr(self, 'framework_version', 2),
-                'adapter_schema': 'class_logit_bias_v2',
-                'mechanism': getattr(self, 'mechanism', 'dp'),
-                'class_score_adapter': self.final_local_vector.tolist(),
-                'global_class_score_adapter': global_vector.tolist(),
-                'alarm_threshold': self.alarm_threshold,
+                'framework_version': getattr(self, 'framework_version', 3),
+                'adapter_schema': (
+                    'class_logit_bias_explicit_alarm_v1' if self.binary_head is not None or fixed_base_alarm
+                    else 'class_logit_bias_v2'
+                ),
+                'mechanism': getattr(self, 'mechanism', 'local_detector'),
+                'class_score_adapter': adapter_vector.tolist(),
+                **({'global_class_score_adapter': global_vector.tolist()} if global_vector is not None else {}),
+                'alarm_threshold': float(threshold),
             },
-            self.directory / 'detector_private.pt',
+            path,
         )
-        return metrics
 
 
 def _predict_private_saved(checkpoint, x, device='cpu', return_subtypes=False):
-    """Read a trusted local v3 checkpoint and apply its fitted final adapter."""
+    """Read a trusted local v3 checkpoint and apply its fitted adapter and alarm policy."""
     saved = torch.load(checkpoint, map_location='cpu', weights_only=False)
+    explicit_alarm = saved.get('binary_head') is not None or saved.get('fixed_base_alarm', False)
+    expected_schema = 'class_logit_bias_explicit_alarm_v1' if explicit_alarm else 'class_logit_bias_v2'
     if (
         saved.get('framework_version') != 3
-        or saved.get('mechanism') != 'mpc'
-        or saved.get('adapter_schema') != 'class_logit_bias_v2'
+        or saved.get('mechanism') not in ('mpc', 'local_detector')
+        or saved.get('adapter_schema') != expected_schema
         or 'attack_subtype_calibration' in saved
     ):
-        raise ValueError('A fresh FedCAID MPC v3 checkpoint is required')
+        raise ValueError('A FedCAID v3 local detector or MPC checkpoint is required')
     transform = core.Transform.restore(saved['transform'])
     model, _ = core.make_model(
         len(saved['feature_names']),
@@ -295,15 +404,24 @@ def _predict_private_saved(checkpoint, x, device='cpu', return_subtypes=False):
         # Historical checkpoints used unbounded PLE extrapolation. Preserve their
         # predictions instead of silently applying the new training policy.
         ple_boundary_policy=saved.get('ple_boundary_policy', 'extrapolate'),
+        feature_attention=saved.get('feature_attention', False),
+        can_id_training=saved.get('can_id_values'),
     )
+    if saved.get('binary_head') is not None:
+        if saved['binary_head'] not in PORTABLE_BINARY_MODES:
+            raise ValueError('Unknown binary detector checkpoint architecture')
+        model = make_binary_alarm_model(model, saved['bins'])
     model.load_state_dict(saved['state'], strict=True)
     p = core.probabilities(core.log_prediction(model.to(device), transform(x), device))
     adapter = ClassScoreAdapter(len(saved['class_names']))
     adapter.set_vector(saved['class_score_adapter'])
-    p = adapter.transform(p)
+    adapted = adapter.transform(p)
+    subtypes = adapted[:, 1:] if saved.get('fixed_base_alarm', False) else None
+    if subtypes is None:
+        p = adapted
     if return_subtypes:
-        return p, saved.get('alarm_threshold', 0.5), None
-    return subtype_joint_probabilities(p), saved.get('alarm_threshold', 0.5)
+        return p, saved.get('alarm_threshold', 0.5), subtypes
+    return subtype_joint_probabilities(p, subtypes), saved.get('alarm_threshold', 0.5)
 
 
 def predict_private(checkpoint, x, device='cpu'):
@@ -316,8 +434,8 @@ def predict_private_decisions(checkpoint, x, device='cpu'):
     """Return probabilities and hierarchical predictions for feature rows x using a trusted local MPC checkpoint and
     its saved threshold.
     """
-    p, threshold, _ = _predict_private_saved(checkpoint, x, device, return_subtypes=True)
-    return {'probabilities': subtype_joint_probabilities(p), **hierarchical_decisions(p, threshold)}
+    p, threshold, subtypes = _predict_private_saved(checkpoint, x, device, return_subtypes=True)
+    return {'probabilities': subtype_joint_probabilities(p, subtypes), **hierarchical_decisions(p, threshold, subtypes)}
 
 
 def execute(args):

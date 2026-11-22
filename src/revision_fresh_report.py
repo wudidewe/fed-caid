@@ -8,16 +8,20 @@ from shutil import copyfile
 from statistics import mean
 from tempfile import TemporaryDirectory
 
+from .revision_alarm_comparison import METRICS as PRIMARY_METRICS
+from .revision_alarm_comparison import PRIMARY_METHOD
 from .revision_benchmark_matrix import benchmark_paper_rows
 from .revision_iov_diagnostics import CLASS_FILE as IOV_CLASS_FILE
 from .revision_iov_diagnostics import PAIRED_FILE as IOV_PAIRED_FILE
 from .revision_iov_diagnostics import STATUS_FILE as IOV_STATUS_FILE
 from .revision_nb15_review_tables import BINARY_TABLE, CLASS_TABLE, FRONTIER_TABLE, write_nb15_review_tables
 from .revision_report import write_csv
+from .revision_run import SEEDS
 from .revision_v12 import _completion_summary, _hash, _read, _write
 
 STAGE_LABELS = {
     'benchmark_matrix': 'Four-dataset benchmark matrix',
+    'alarm_comparison': 'Supplementary dual-head TabM alarm comparison',
     'iov_diagnosis': 'CIC-IoV-2024 working-point diagnosis',
     'scale_matrix': 'Client scale and Dirichlet heterogeneity',
     'can_quantization': 'CAN adapter quantization',
@@ -36,6 +40,11 @@ STAGE_LABELS = {
 STAGE_STATUSES = {'completed', 'pending', 'failed'}
 REVIEW_DOCUMENTS = {'data_audit.json', 'binary_pair_status.json', IOV_STATUS_FILE}
 STAGE_COVERAGE = {
+    'alarm_comparison': (
+        'Four-dataset matrix',
+        'Original and dual-head local TabM alarms with matched scalar CAL thresholds',
+        'Grouped development VAL',
+    ),
     'nb15_pair': ('CIC-UNSW-NB15', 'Matched TabM detector objectives', 'Grouped benchmark VAL'),
     'nb15_low_far': ('CIC-UNSW-NB15', 'Frozen backbone and full weight tuning', 'Grouped development VAL'),
     'nb15_threshold': ('CIC-UNSW-NB15', 'Matched CAL threshold rules', 'Grouped development VAL'),
@@ -83,6 +92,7 @@ MATRIX_DATASETS = ('CIC-IDS-2017', 'CIC-UNSW-NB15', 'CIC-IoV-2024', 'Car-Hacking
 CAN_DATASETS = ('CIC-IoV-2024', 'Car-Hacking')
 ABLATION_TABLE = 'benchmark_ablation_effects.csv'
 CLASS_SUPPORT_TABLE = 'benchmark_class_support.csv'
+OPERATING_TABLE = 'benchmark_operating_points.csv'
 STAGE_TIMING_TABLE = 'stage_wall_time.csv'
 ABLATION_METRICS = ('macro_f1', 'far', 'fnr')
 ABLATION_CONTRASTS = {
@@ -93,8 +103,22 @@ ABLATION_CONTRASTS = {
     'local_only_minus_local_fixed': 'Local CAL threshold − fixed 0.5',
 }
 RARE_CLASS_MAX_SUPPORT = 100
+ALARM_COMPARISON_POLICIES = {'scalar_cal': 'Scalar CAL', 'fixed_070': 'Fixed 0.70'}
+ALARM_COMPARISON_DETECTORS = {'original': 'Original TabM', 'binary_swa': 'Dual-head TabM'}
+ALARM_COMPARISON_METRICS = ('far', 'fnr', 'macro_f1')
+PRIMARY_STAGES = {'base': 'base_threshold', 'local': 'local_only', 'federated': 'full'}
+PRIMARY_STAGE_LABELS = {'base': 'Detector only', 'local': 'Local adapter', 'federated': 'Federated adapter'}
+PRIMARY_CONTRASTS = {
+    ('binary_swa/scalar_cal/local', 'binary_swa/scalar_cal/base'):
+        ('local_only_minus_base_threshold', 'Local adapter − detector only'),
+    ('binary_swa/scalar_cal/federated', 'binary_swa/scalar_cal/local'):
+        ('full_minus_local_only', 'Federated adapter − local adapter'),
+    ('binary_swa/fixed_070/federated', 'binary_swa/scalar_cal/federated'):
+        ('fixed_070_minus_scalar_cal', 'Fixed 0.70 − scalar CAL, each with federated adapter'),
+}
 OPTIONAL_PEERS = {
     'benchmark_matrix',
+    'alarm_comparison',
     'iov_diagnosis',
     'scale_matrix',
     'can_quantization',
@@ -106,6 +130,13 @@ OPTIONAL_PEERS = {
 }
 AUXILIARY_STAGES = {'scale_matrix', 'can_quantization', 'nb15_temporal', 'loopback', 'kminus1_transfer'}
 AUXILIARY_TABLES = {
+    'alarm_comparison': {
+        'metrics_summary.csv': 'Detector and threshold means, variability and extremes',
+        'metrics_by_seed.csv': 'Detector and threshold results by seed',
+        'paired_differences.csv': 'Matched detector and threshold differences in percentage points',
+        'matched_reference.csv': 'Matched alarm partitions, calibration and result bindings',
+        'class_metrics_by_seed.csv': 'Per-class detector and threshold metrics by seed',
+    },
     'scale_matrix': {
         'metrics.csv': 'Scale and heterogeneity absolute grouped VAL metrics',
         'paired_intervals.csv': 'Scale and heterogeneity matched effects',
@@ -277,10 +308,12 @@ def _verified_files(root, bindings):
 
 
 def _export_for_review(stage, artifact):
-    """Keep both NB15 objective receipts alongside measurements and audits."""
+    """Keep measurements, role audits and the stage-specific control receipts."""
     if artifact.suffix.lower() == '.csv' or artifact.name in REVIEW_DOCUMENTS:
         return True
     if stage == 'benchmark_matrix' and artifact.as_posix() == 'run.json':
+        return True
+    if stage == 'alarm_comparison' and artifact.name in {'run.json', 'complete.json'}:
         return True
     if stage in {'nb15_low_far', 'nb15_threshold'} and artifact.name in {
         'assessment.json',
@@ -548,11 +581,20 @@ def _cell(value):
     return ' '.join(str(value).splitlines()).replace('|', r'\|')
 
 
-def _status_lines(stages):
+def _stage_label(stage, primary):
+    """Label legacy and promoted benchmark stages according to their design."""
+    if primary and stage == 'alarm_comparison':
+        return 'Primary dual-head TabM benchmark'
+    if primary and stage == 'benchmark_matrix':
+        return 'Original TabM reference and full-weight FedAvg'
+    return STAGE_LABELS[stage]
+
+
+def _status_lines(stages, primary):
     """Keep stage completion and scientific assessment in separate columns."""
     lines = ['| Experiment | Execution | Scientific status | Note |', '| --- | --- | --- | --- |']
     for stage, record in stages.items():
-        cells = (STAGE_LABELS[stage], record['status'], _science(record), record.get('reason', ''))
+        cells = (_stage_label(stage, primary), record['status'], _science(record), record.get('reason', ''))
         lines.append('| ' + ' | '.join(map(_cell, cells)) + ' |')
     return lines
 
@@ -573,6 +615,8 @@ def _scope_note(stage, record):
             return 'Operator-declared endpoints. Independent physical host verification unavailable.'
     if stage == 'loopback' and record['status'] == 'completed':
         return 'Timing covers synthetic aggregation transport on one host.'
+    if stage == 'alarm_comparison' and record['status'] == 'completed':
+        return 'Paired comparison of local detector alarms on grouped development VAL.'
     if stage == 'nb15_temporal' and record['status'] == 'completed':
         return 'The dated holdout shares the benchmark source and has been explored previously.'
     if stage == 'can_quantization' and record['status'] == 'completed':
@@ -594,10 +638,20 @@ def _coverage_record(dataset, evidence, protocol, status, heldout_scored, note):
     )
 
 
-def _coverage(stages):
+def _coverage(stages, primary):
     """List performed work, conditional stages and work outside this run."""
     matrix = stages.get('benchmark_matrix')
     for dataset in MATRIX_DATASETS:
+        if primary:
+            dual = stages['alarm_comparison']
+            yield _coverage_record(
+                dataset,
+                'Primary dual-head TabM with scalar CAL, detector only / local adapter / federated adapter',
+                'Grouped benchmark VAL',
+                dual['status'],
+                _heldout_scored('alarm_comparison', dual),
+                dual.get('reason', ''),
+            )
         yield _coverage_record(
             dataset,
             'Dirichlet label skew, 3 clients, α=0.8, base TabM / K−1 adapter / full-weight FedAvg',
@@ -610,7 +664,7 @@ def _coverage(stages):
     for stage, scope in STAGE_COVERAGE.items():
         record = stages.get(stage)
         if record is None:
-            if stage != 'iov_diagnosis':
+            if stage not in {'iov_diagnosis', 'alarm_comparison'}:
                 yield _coverage_record(*scope, 'outside run scope', 'not run', '')
             continue
         yield _coverage_record(*scope, record['status'], _heldout_scored(stage, record), _scope_note(stage, record))
@@ -662,7 +716,7 @@ def _summary(run_root, stages, tables, evidence):
         f'Run `{run_root.name}`',
         '',
         *evidence['refresh_note'],
-        *_status_lines(stages),
+        *_status_lines(stages, evidence['primary']),
         '',
         SCOPE.strip(),
         '',
@@ -673,7 +727,7 @@ def _summary(run_root, stages, tables, evidence):
     ]
     for stage, paths in tables.items():
         if paths:
-            lines.extend([f'### {STAGE_LABELS[stage]}', ''])
+            lines.extend([f"### {_stage_label(stage, evidence['primary'])}", ''])
             lines.extend(f'- [{Path(path).name}]({path})' for path in paths)
             lines.append('')
     lines.extend(['[Execution details](stage_status.json) · [Verified stage artifact hashes](evidence_plan.json)', ''])
@@ -688,13 +742,21 @@ def _evidence_lines(evidence, stages):
         ('branches', 'Matched Hulk branches by seed', 'matched_branch_metrics.csv'),
         ('audits', 'Data role audits', 'data_role_audit.csv'),
         ('run_plan_sha256', 'Run plan and code hashes', evidence['run_plan_link']),
-        ('matrix', 'Four-dataset operating points and class scope', 'benchmark_operating_points.csv'),
+        ('matrix', 'Four-dataset operating points and class scope', OPERATING_TABLE),
         ('ablation', 'Paired ablation effects in percentage points', ABLATION_TABLE),
         ('class_support', 'All defined classes with support and zero-recall counts', CLASS_SUPPORT_TABLE),
         ('timing', 'Recorded stage elapsed time and its scope', STAGE_TIMING_TABLE),
         ('continuation', 'Verified continuation plan', 'source_continuation_plan.json'),
     ]
     selected = [f'[{label}]({path})' for key, label, path in links if evidence[key]]
+    if evidence['primary']:
+        for key, label, name in (
+            ('original_matrix', 'operating points', OPERATING_TABLE),
+            ('original_ablations', 'ablations', ABLATION_TABLE),
+            ('original_classes', 'class support', CLASS_SUPPORT_TABLE),
+        ):
+            if evidence[key]:
+                selected.append(f'[Original TabM reference {label}](original_tabm_{name})')
     selected.extend(evidence['matrix_links'])
     selected.extend(evidence['nb15_links'])
     selected.extend(evidence['iov_links'])
@@ -704,9 +766,12 @@ def _evidence_lines(evidence, stages):
     return [
         '## Key evidence',
         '',
-        *_matrix_lines(evidence['matrix']),
-        *_ablation_lines(evidence['ablation']),
+        *(_primary_lines(evidence['matrix'], stages['alarm_comparison']) if evidence['primary']
+          else _matrix_lines(evidence['matrix'])),
+        *_ablation_lines(evidence['ablation'], evidence['primary']),
         *_class_support_lines(evidence['class_support']),
+        *_matrix_lines(evidence.get('original_matrix', []), original=True),
+        *_alarm_comparison_lines(evidence['alarm_comparison'], stages.get('alarm_comparison', {}), evidence['primary']),
         *_iov_lines(evidence['iov']),
         *_iov_fixed_lines(evidence['iov_fixed_status'], evidence['iov_classes']),
         *_nb15_binary_lines(stages.get('nb15_pair', {}).get('binary_assessment', {})),
@@ -716,7 +781,7 @@ def _evidence_lines(evidence, stages):
         *_external_lines(stages.get('external', {})),
         *_auxiliary_lines(stages),
         *_loopback_lines(evidence['loopback_rows']),
-        *_timing_lines(evidence['timing']),
+        *_timing_lines(evidence['timing'], evidence['primary']),
         *[f'- {link}' for link in selected],
         '',
     ]
@@ -797,18 +862,21 @@ def _loopback_line(row):
     return '| ' + ' | '.join(map(_cell, cells)) + ' |'
 
 
-def _matrix_lines(rows):
+def _matrix_lines(rows, *, original=False):
     """Show the operating and class-coverage limits of the compact baseline."""
     if not rows:
         return []
     fedavg = {row['dataset']: row for row in rows if row['mode'] == 'fedavg_threshold'}
     return [
-        '### Four-dataset K−1 adapter operating points',
+        ('### Original TabM reference and FedAvg operating points' if original
+         else '### Four-dataset K−1 adapter operating points'),
         '',
         (
             'Grouped VAL with Dirichlet label skew, three clients and α=0.8. '
             'Macro-F1 averages observed true classes. Payload counts logical bytes per round.'
         ),
+        *(['Both the compact adapter and the full-weight FedAvg reference here use the original TabM. '
+           'This payload and performance comparison describes the original architecture.'] if original else []),
         '',
         (
             '| Dataset | Observed / defined | Zero VAL support | Supported classes with zero recall in any'
@@ -836,12 +904,111 @@ def _matrix_line(row, fedavg):
     return '| ' + ' | '.join(map(_cell, cells)) + ' |'
 
 
-def _ablation_lines(rows):
+def _primary_lines(rows, record):
+    """Show accuracy, class scores and operating rates of the promoted method."""
+    heading = ['### Primary dual-head TabM with scalar CAL', '']
+    if record.get('smoke'):
+        return [*heading, 'This synthetic check exercises the reporting path.', '']
+    if not rows:
+        return [*heading, 'No completed primary results in this run.', '']
+    return [
+        *heading,
+        'Grouped development VAL, three clients and Dirichlet α=0.8. Cells show means across seeds. '
+        'Scalar thresholds are selected on each client’s CAL holdout using an empirical 1% FAR target. '
+        'The three primary branches share the same alarm decisions and differ in subtype adaptation. '
+        'Macro F1 averages classes with VAL support.',
+        '',
+        '| Dataset | Adapter | VAL classes | Accuracy (%) | Macro F1 (%) | Weighted F1 (%) | '
+        'FAR mean / max (%) | FNR mean / max (%) | Seeds with FAR > 1% | Seeds with FNR > 1% |',
+        '| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+        *[_primary_line(row) for row in rows],
+        '',
+    ]
+
+
+def _primary_line(row):
+    """Format the promoted result with the same percentage precision for all rates."""
+    def percent(value):
+        return f'{value * 100:.4f}' if value is not None else 'Unavailable'
+
+    cells = (
+        row['dataset'], PRIMARY_STAGE_LABELS[row['subtype_stage']],
+        f"{row['observed_classes']}/{row['defined_classes']}",
+        *(percent(row[f'{metric}_mean']) for metric in ('accuracy', 'macro_f1', 'weighted_f1')),
+        *(' / '.join(percent(row[f'{metric}_{field}']) for field in ('mean', 'max')) for metric in ('far', 'fnr')),
+        *(f"{row[f'{metric}_seeds_over_cap']}/{row[f'{metric}_observed_seeds']}" for metric in ('far', 'fnr')),
+    )
+    return '| ' + ' | '.join(map(_cell, cells)) + ' |'
+
+
+def _alarm_comparison_lines(evidence, record, primary):
+    """Show the separately scoped alarm comparison and its per-seed targets."""
+    if not evidence:
+        return []
+    heading = [('### Detector and fixed-threshold controls' if primary
+                else '### Supplementary dual-head TabM alarm comparison'), '']
+    if record.get('smoke'):
+        return [*heading, 'This synthetic check exercises the reporting path.', '']
+    metrics, contrasts = evidence
+    lines = [
+        *heading,
+        'Local detector decisions on the same grouped development VAL records. Scalar thresholds use a 1% '
+        'empirical FAR target on each client’s CAL holdout. The exceedance counts use observed VAL rates.',
+    ]
+    if not primary:
+        lines.append('The original K−1 matrix is the primary benchmark.')
+    if primary or record.get('threshold_sensitivity'):
+        lines.append('Fixed 0.70 shows the sensitivity of the dual-head detector to a different cutoff.')
+    lines.extend([
+        '',
+        '| Dataset | Detector | Policy | Subtype branch | Accuracy (%) | Macro F1 (%) | FAR mean / max (%) | '
+        'FNR mean / max (%) | Seeds with FAR > 1% | Seeds with FNR > 1% |',
+        '| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |',
+        *[_alarm_comparison_line(row, cases) for row, cases in metrics],
+        '',
+    ])
+    if contrasts:
+        lines.extend([
+            'Dual-head TabM minus original TabM under scalar CAL, in percentage points. '
+            'Paired 95% intervals describe variability across seeds sharing the same captures.',
+            '',
+            '| Dataset | FAR difference | FNR difference | Macro F1 difference |',
+            '| --- | ---: | ---: | ---: |',
+        ])
+        for dataset, differences in contrasts.items():
+            cells = [dataset]
+            for metric in ALARM_COMPARISON_METRICS:
+                row = differences[metric]
+                cells.append(_interval({key: row[f'{key}_pp'] for key in ('mean', 'ci95_low', 'ci95_high')}))
+            lines.append('| ' + ' | '.join(map(_cell, cells)) + ' |')
+        lines.append('')
+    return lines
+
+
+def _alarm_comparison_line(row, cases):
+    """Report the mean, maximum and observed seed exceedances together."""
+    def rates(metric):
+        return f"{float(row[f'{metric}_mean_pct']):.4f} / {float(row[f'{metric}_max_pct']):.4f}"
+
+    def exceedances(metric):
+        return sum(float(case[metric]) > 0.01 for case in cases)
+
+    cells = (
+        row['dataset'], ALARM_COMPARISON_DETECTORS[row['detector']], ALARM_COMPARISON_POLICIES[row['alarm_policy']],
+        PRIMARY_STAGE_LABELS[row['subtype_stage']],
+        f"{float(row['accuracy_mean_pct']):.4f}", f"{float(row['macro_f1_mean_pct']):.4f}",
+        rates('far'), rates('fnr'), f'{exceedances("far")}/{len(cases)}', f'{exceedances("fnr")}/{len(cases)}',
+    )
+    return '| ' + ' | '.join(map(_cell, cells)) + ' |'
+
+
+def _ablation_lines(rows, primary):
     """Show paired effects using percentage points for all three metrics."""
     if not rows:
         return []
     return [
-        '### Matched K−1 adapter ablations',
+        ('### Matched dual-head adapter ablations and threshold sensitivity' if primary
+         else '### Matched K−1 adapter ablations'),
         '',
         'Grouped development VAL. Each cell shows the mean paired change [95% interval] in percentage points.',
         'Positive FAR and FNR changes mean more errors. The CSV records paired seed counts for each metric.',
@@ -874,8 +1041,10 @@ def _class_support_lines(rows):
     if not rows:
         return []
     shown = [row for row in rows if row['support_max'] <= RARE_CLASS_MAX_SUPPORT or row['zero_recall_seeds']]
+    primary = rows[0].get('detector') == 'binary_swa'
     return [
-        '### Sparse classes and zero recall in the K−1 benchmark',
+        ('### Sparse classes and zero recall in the primary method' if primary
+         else '### Sparse classes and zero recall in the K−1 benchmark'),
         '',
         f'Full adapter on grouped VAL. Shown when support per seed never exceeds {RARE_CLASS_MAX_SUPPORT} '
         'or a supported seed has zero recall. The CSV includes every defined class.',
@@ -898,7 +1067,7 @@ def _class_support_line(row):
     return '| ' + ' | '.join(map(_cell, cells)) + ' |'
 
 
-def _timing_lines(rows):
+def _timing_lines(rows, primary):
     """Distinguish per-attempt durations from whole-experiment timing."""
     if not rows:
         return []
@@ -914,16 +1083,16 @@ def _timing_lines(rows):
         '',
         '| Stage | Elapsed (s) | Timing scope | Saved cases before continuation |',
         '| --- | ---: | --- | ---: |',
-        *[_timing_line(row) for row in rows],
+        *[_timing_line(row, primary) for row in rows],
         '',
     ]
 
 
-def _timing_line(row):
+def _timing_line(row, primary):
     """Format the recorded scope without imputing a missing duration."""
     count = row['saved_case_bindings']
     cells = (
-        STAGE_LABELS[row['stage']],
+        _stage_label(row['stage'], primary),
         f"{row['elapsed_seconds']:,.2f}",
         row['elapsed_scope'],
         '—' if count is None else count,
@@ -1254,13 +1423,19 @@ def _collect(run_root, stages, working, *, refresh=None):
         verified, tables[stage] = _collect_stage(run_root, stage, record, working)
         sources.update(verified)
     evidence = _report_evidence(run_root, working, sources, tables)
-    evidence['coverage'] = list(_coverage(stages))
+    alarm_stage = stages.get('alarm_comparison', {})
+    primary = _dual_head_primary(run_root, working, alarm_stage)
+    evidence['primary'] = primary
+    evidence['coverage'] = list(_coverage(stages, primary))
     evidence['matrix_links'] = _matrix_links(tables.get('benchmark_matrix', []))
     evidence.update(_nb15_evidence(working))
-    evidence.update(_matrix_evidence(working))
+    evidence.update(_matrix_evidence(working, original=primary))
+    if primary:
+        evidence.update(_primary_evidence(working, alarm_stage))
     evidence.update(_timing_evidence(run_root, stages, working, sources, evidence['run_plan_sha256']))
     evidence.update(_iov_evidence(working, tables.get('iov_diagnosis', [])))
     evidence.update(_auxiliary_evidence(working, tables))
+    evidence['alarm_comparison'] = _alarm_comparison_evidence(working, alarm_stage, primary)
     if refresh is not None:
         evidence.update(
             run_plan_link='source_run_plan.json',
@@ -1294,16 +1469,203 @@ def _auxiliary_evidence(working, tables):
     return {'auxiliary_links': links, 'loopback_rows': rows}
 
 
-def _matrix_evidence(working):
+def _dual_head_primary(run_root, working, stage):
+    """Resolve the primary method against the planned and bound stage declarations."""
+    plan_path = _artifact_path(run_root, 'final_plan.json')
+    plan = _read(plan_path) if plan_path.is_file() else {}
+    in_plan = all(plan.get(key) == value for key, value in PRIMARY_METHOD.items())
+    in_stage = all(stage.get(key) == value for key, value in PRIMARY_METHOD.items())
+    if stage.get('status') == 'completed' and (in_plan or in_stage):
+        bound = working / 'tables' / 'alarm_comparison' / 'complete.json'
+        receipt = _read(bound) if bound.is_file() else {}
+        if not in_stage or any(receipt.get(key) != value for key, value in PRIMARY_METHOD.items()):
+            raise ValueError('The completed dual-head benchmark must bind the declared primary method')
+        if 'primary_detector' in plan and not in_plan:
+            raise ValueError('The primary method differs from the run plan')
+    return in_plan or in_stage
+
+
+def _alarm_comparison_evidence(working, stage, primary):
+    """Read the verified report inputs and check grouped VAL case coverage."""
+    if stage.get('status') != 'completed':
+        return None
+    if stage.get('test_evaluated') is not False:
+        raise ValueError('The supplementary alarm comparison must use grouped development VAL')
+    source = working / 'tables' / 'alarm_comparison'
+    datasets, seeds = stage['datasets'], set(stage['seeds'])
+    paired = stage['reference_paired']
+    policies = [('binary_swa', 'scalar_cal', 'base')]
+    if paired:
+        policies.insert(0, ('original', 'scalar_cal', 'base'))
+    if primary:
+        policies.extend([('binary_swa', 'scalar_cal', 'federated'), ('binary_swa', 'fixed_070', 'federated')])
+    elif stage['threshold_sensitivity']:
+        policies.append(('binary_swa', 'fixed_070', 'base'))
+    expected = {(dataset, *policy) for dataset in datasets for policy in policies}
+
+    def key(row):
+        return row['dataset'], row['detector'], row['alarm_policy'], row['subtype_stage']
+
+    by_condition = defaultdict(list)
+    for row in _rows(source, 'metrics_by_seed.csv'):
+        if key(row) in expected:
+            by_condition[key(row)].append(row)
+    averages = [row for row in _rows(source, 'metrics_summary.csv') if key(row) in expected]
+    if (len(averages) != len(expected) or {key(row) for row in averages} != expected
+            or any(len(cases) != len(seeds) or {int(row['seed']) for row in cases} != seeds
+                   for cases in by_condition.values()) or set(by_condition) != expected):
+        raise ValueError('The supplementary alarm comparison is missing matched operating-point rows')
+    contrasts = defaultdict(dict)
+    if paired:
+        matches = [(row['dataset'], int(row['seed'])) for row in _rows(source, 'matched_reference.csv')]
+        if len(matches) != len(datasets) * len(seeds) or set(matches) != {(d, s) for d in datasets for s in seeds}:
+            raise ValueError('The supplementary alarm comparison is missing reference bindings')
+        for row in _rows(source, 'paired_differences.csv'):
+            if (row['candidate'], row['reference']) == ('binary_swa/scalar_cal/base', 'original/scalar_cal/base'):
+                contrasts[row['dataset']][row['metric']] = row
+        if set(contrasts) != set(datasets) or any(not set(ALARM_COMPARISON_METRICS) <= rows.keys()
+                                                  for rows in contrasts.values()):
+            raise ValueError('The supplementary alarm comparison is missing paired contrasts')
+    return [(row, by_condition[key(row)]) for row in averages], contrasts
+
+
+def _matrix_evidence(working, *, original=False):
     """Derive scope-aware comparisons from the already checked native tables."""
     source = working / 'tables' / 'benchmark_matrix'
     rows = benchmark_paper_rows(source)
     ablations = _ablation_rows(source)
     classes = _class_support_rows(source)
-    _write_table(working / 'benchmark_operating_points.csv', rows)
-    _write_table(working / ABLATION_TABLE, ablations)
-    _write_table(working / CLASS_SUPPORT_TABLE, classes)
+    _write_benchmark_tables(working, rows, ablations, classes, prefix='original_tabm_' if original else '')
+    if original:
+        return {'original_matrix': rows, 'original_ablations': ablations, 'original_classes': classes}
     return {'matrix': rows, 'ablation': ablations, 'class_support': classes}
+
+
+def _write_benchmark_tables(working, rows, ablations, classes, *, prefix=''):
+    """Publish parallel primary and original-reference tables using distinct names."""
+    for name, records in ((OPERATING_TABLE, rows), (ABLATION_TABLE, ablations), (CLASS_SUPPORT_TABLE, classes)):
+        _write_table(working / f'{prefix}{name}', records)
+
+
+def _primary_evidence(working, stage):
+    """Publish the primary scalar CAL rows and only the corresponding class and paired evidence."""
+    if stage['status'] != 'completed':
+        return {'matrix': [], 'ablation': [], 'class_support': []}
+    source = working / 'tables' / 'alarm_comparison'
+    datasets, seeds = stage['datasets'], set(stage['seeds'])
+    expected_seeds = {SEEDS[0]} if stage['smoke'] else set(SEEDS)
+    if (len(datasets) != len(MATRIX_DATASETS) or set(datasets) != set(MATRIX_DATASETS)
+            or seeds != expected_seeds or stage.get('test_evaluated') is not False):
+        raise ValueError('The primary dual-head benchmark lacks the declared dataset, seed, or grouped VAL scope')
+    expected = {(dataset, branch) for dataset in datasets for branch in PRIMARY_STAGES}
+
+    cases, averages = defaultdict(list), {}
+    for row in _rows(source, 'metrics_by_seed.csv'):
+        if _is_primary_row(row):
+            cases[row['dataset'], row['subtype_stage']].append(row)
+    for row in _rows(source, 'metrics_summary.csv'):
+        if _is_primary_row(row):
+            key = (row['dataset'], row['subtype_stage'])
+            if key in averages:
+                raise ValueError(f'Duplicate primary operating point: {key}')
+            averages[key] = row
+    if (set(cases) != expected or set(averages) != expected
+            or any(len(rows) != len(seeds) or {int(row['seed']) for row in rows} != seeds for rows in cases.values())):
+        raise ValueError('The primary dual-head benchmark lacks matched operating-point rows')
+
+    rows = [_primary_point(averages[key], cases[key])
+            for key in ((dataset, branch) for dataset in datasets for branch in PRIMARY_STAGES)]
+    ablations = _primary_ablation_rows(source, datasets)
+    classes = _primary_class_rows(source, datasets, seeds, cases)
+    _write_benchmark_tables(working, rows, ablations, classes)
+    return {'matrix': rows, 'ablation': ablations, 'class_support': classes}
+
+
+def _is_primary_row(row):
+    """Match the dual-head detector and its clientwise scalar threshold policy."""
+    return (row.get('detector'), row.get('alarm_policy')) == ('binary_swa', 'scalar_cal')
+
+
+def _primary_point(row, cases):
+    """Keep benchmark column units while preserving the detector and threshold identity."""
+    branch = row['subtype_stage']
+    first = cases[0]
+    scope = {key: int(first[key]) for key in ('observed_classes', 'defined_classes', 'val_rows')}
+    for case in cases:
+        if any(int(case[key]) != value for key, value in scope.items()):
+            raise ValueError(f"Inconsistent primary validation population for {row['dataset']}")
+    record = {
+        'dataset': row['dataset'], 'mode': PRIMARY_STAGES[branch], 'role': 'val', 'protocol': 'grouped',
+        'scenario': 'main', 'detector': row['detector'], 'alarm_policy': row['alarm_policy'],
+        'subtype_stage': branch, 'far_cap': 0.01, **scope,
+    }
+    for metric in PRIMARY_METRICS:
+        count = sum(case[metric] != '' for case in cases)
+        record.update(
+            {f'{metric}_n': count,
+             f'{metric}_mean': _percentage_ratio(row[f'{metric}_mean_pct']),
+             f'{metric}_sd': _percentage_ratio(row[f'{metric}_sd_pp'])}
+        )
+        if metric in ('far', 'fnr'):
+            record.update(
+                {f'{metric}_max': _percentage_ratio(row[f'{metric}_max_pct']),
+                 f'{metric}_observed_seeds': count, f'{metric}_seeds_over_cap': row[f'{metric}_seeds_above_1pct']}
+            )
+    return record
+
+
+def _percentage_ratio(value):
+    """Return the ratio stored in the canonical benchmark tables."""
+    return float(value) / 100 if value != '' else None
+
+
+def _primary_ablation_rows(source, datasets):
+    """Keep the native fixed-alarm ablations and the paired fixed-threshold control."""
+    contrasts = defaultdict(dict)
+    for row in _rows(source, 'paired_differences.csv'):
+        comparison = (row['candidate'], row['reference'])
+        if comparison not in PRIMARY_CONTRASTS or row['metric'] not in PRIMARY_METRICS:
+            continue
+        key = (row['dataset'], comparison)
+        if row['metric'] in contrasts[key]:
+            raise ValueError(f'Duplicate primary ablation: {key} {row["metric"]}')
+        contrasts[key][row['metric']] = row
+    expected = {(dataset, pair) for dataset in datasets for pair in PRIMARY_CONTRASTS}
+    if set(contrasts) != expected or any(set(rows) != set(PRIMARY_METRICS) for rows in contrasts.values()):
+        raise ValueError('The primary dual-head benchmark lacks matched ablation contrasts')
+    result = []
+    for dataset in datasets:
+        for pair, (code, label) in PRIMARY_CONTRASTS.items():
+            record = {
+                'dataset': dataset, 'detector': 'binary_swa', 'alarm_policy': 'scalar_cal',
+                'protocol': 'grouped', 'scenario': 'main', 'role': 'val', 'contrast': code, 'comparison': label,
+                'candidate': pair[0], 'reference': pair[1],
+            }
+            for metric, row in contrasts[dataset, pair].items():
+                record[f'{metric}_paired_seeds'] = row['seeds']
+                for field in ('mean', 'ci95_low', 'ci95_high'):
+                    key = f'{field}_pp'
+                    record[f'{metric}_{key}'] = float(row[key]) if row[key] != '' else None
+            result.append(record)
+    return result
+
+
+def _primary_class_rows(source, datasets, seeds, cases):
+    """Retain every defined class of the primary federated branch with its known support."""
+    groups = defaultdict(list)
+    for row in _rows(source, 'class_metrics_by_seed.csv'):
+        if _is_primary_row(row) and row['subtype_stage'] == 'federated':
+            groups[row['dataset'], row['class']].append(row)
+    for dataset in datasets:
+        rows = cases[dataset, 'federated']
+        scoped = [items for (name, _), items in groups.items() if name == dataset]
+        if (len(scoped) != int(rows[0]['defined_classes'])
+                or any(len(items) != len(seeds) or {int(row['seed']) for row in items} != seeds for items in scoped)):
+            raise ValueError(f'Incomplete primary subclass evidence for {dataset}')
+    return [
+        {**_class_support_record(key, rows), 'detector': 'binary_swa', 'alarm_policy': 'scalar_cal'}
+        for key, rows in sorted(groups.items())
+    ]
 
 
 def _ablation_rows(source):

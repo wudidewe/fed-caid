@@ -3,16 +3,17 @@
 import csv
 from pathlib import Path
 
+from .revision_iov_row_audit import verify_iov_full_rows
 from .revision_nb15_source import BINARY_OUTPUTS, STAGES, binary_pair_assessment
 from .revision_next import _source_receipt
 from .revision_next import main as run_native
-from .revision_run import main as run_matrix
+from .revision_run import SEEDS, grouped_validation_arguments, main as run_matrix
 from .revision_v12 import _bindings, _hash, _read, _write
 
-SEEDS = (42, 43, 44, 45, 46)
 CONTROLS = ('v12_plan.json', 'v12_state.json', 'v12_complete.json')
 IOV = 'CIC-IoV-2024'
 IOV_STATUS = 'iov_fixed_mask_status.json'
+IOV_ROW_RETENTION = 'iov_row_retention.json'
 IOV_TABLES = (
     'iov_operating_diagnostics.csv',
     'iov_alarm_overlap.csv',
@@ -192,29 +193,11 @@ def run_fresh_hulk_attribution(output, project, *, device='auto'):
 def _iov_arguments(output, project, device, seeds, smoke):
     """Use the original IoV matrix settings with an additive fixed-alarm control."""
     return [
-        '--dataset',
-        IOV,
-        '--protocol',
-        'grouped',
-        '--scenarios',
-        'main',
-        '--seeds',
-        *map(str, seeds),
-        '--device',
-        device,
-        '--data-root',
-        str(project / 'dataset'),
-        '--out',
-        str(output),
-        '--group-cal',
-        '--development-only',
+        *grouped_validation_arguments(output, project / 'dataset', device, (IOV,), seeds, smoke=smoke),
         '--threshold-insufficient-policy',
         'disable',
-        '--no-tcp',
-        '--no-figures',
         '--iov-diagnostics',
         '--iov-fixed-base-alarm',
-        *(['--smoke'] if smoke else []),
     ]
 
 
@@ -231,6 +214,11 @@ def _iov_case_files(output, seeds):
             or {row['role'] for row in result['evaluations']} != {'val'}
             or result['prediction_cache'] is not None
             or result['settings'].get('iov_fixed_base_alarm') is not True
+            or result['settings'].get('detector_objective') != 'prior_adjusted'
+            or any(result['settings'].get(name) for name in (
+                'tabm_attention', 'tabm_can_id_robust', 'tabm_train_retrieval', 'tabm_tree_score_fusion',
+                'tabm_binary_head', 'tree_alarm_count',
+            ))
             or not set(IOV_MODES) <= {row['mode'] for row in result['evaluations']}
         ):
             raise ValueError(f'Unexpected scope or score cache for IoV seed {seed}')
@@ -262,7 +250,10 @@ def _verify_fixed_alarms(rows):
             continue
         reference = rows[seed, client, role, 'base_threshold']
         hashes_present = all(row[field] for field in ('alarm_mask_sha256', 'ordered_attack_score_sha256'))
-        if not hashes_present or any(row[field] != reference[field] for field in IOV_ALARM_FIELDS):
+        if not hashes_present or any(
+            row.get(field) != reference.get(field)
+            for field in (*IOV_ALARM_FIELDS, 'threshold_seen_id', 'threshold_unseen_id')
+        ):
             raise ValueError(f'The fixed alarm control changed the baseline mask on {seed}/{client}/{role}/{mode}')
 
 
@@ -276,11 +267,17 @@ def _iov_artifacts(output, seeds, smoke):
         or config['synthetic_only'] is not smoke
         or config.get('iov_diagnostics') is not True
         or config.get('iov_fixed_base_alarm') is not True
+        or any(config.get(name) for name in ('iov_detector_objective', 'tabm_attention', 'tabm_refinement'))
+        or 'tree_alarm_count' in config
     ):
         raise ValueError('The IoV result does not match its diagnostic settings')
     _verify_iov_rows(output, seeds)
     names = {'run.json', 'complete.json', *IOV_TABLES, *(p.name for p in output.glob('*.csv'))}
-    return _bindings(output, sorted(names) + _iov_case_files(output, seeds))
+    if not smoke:
+        _write(output / IOV_ROW_RETENTION, verify_iov_full_rows(output, IOV, seeds))
+        names.add(IOV_ROW_RETENTION)
+    case_files = _iov_case_files(output, seeds)
+    return _bindings(output, sorted(names) + case_files)
 
 
 def run_fresh_iov_diagnosis(output, project, *, device='auto', smoke=False):
@@ -300,6 +297,7 @@ def run_fresh_iov_diagnosis(output, project, *, device='auto', smoke=False):
         'test_evaluated': False,
         'threshold_candidate_evaluated': False,
         'fixed_base_alarm_evaluated': True,
+        'detector_objective': 'prior_adjusted',
         'synthetic_only': smoke,
         'artifacts': artifacts,
     }

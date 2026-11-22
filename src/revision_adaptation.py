@@ -11,6 +11,13 @@ import numpy as np
 
 from .privacy_core import ClassScoreAdapter, digest, fit_class_adapter
 from .revision_fixed_subtype import fixed_subtype_predictions
+from .revision_iov_id_gate import (
+    ID_GATE_MODE,
+    ID_GATE_RULE,
+    SEEN_ID_THRESHOLD,
+    UNSEEN_ID_THRESHOLD,
+    id_thresholds,
+)
 from .secure_aggregation import SecureAggregationSession, _clip_quantize
 from .utils import empirical_alarm_threshold, hierarchical_decisions, split_calibration
 
@@ -32,6 +39,13 @@ FIXED_BASE_MODES = {'local_only': 'fixed_base_local', 'full': 'fixed_base_full'}
 FIXED_BASE_MODE_DESCRIPTIONS = {
     'fixed_base_local': 'Base TabM binary alerts with locally adapted attack subtype labels',
     'fixed_base_full': 'Base TabM binary alerts with federated and personalized attack subtype labels',
+}
+
+PORTABLE_FIXED_THRESHOLD = 0.70
+PORTABLE_FIXED_MODES = {
+    'base_threshold': 'base_fixed070',
+    'local_only': 'fixed070_local',
+    'full': 'fixed070_full',
 }
 
 MODE_DESCRIPTIONS = {
@@ -75,6 +89,7 @@ class AdapterClient:
     """Hold one client's CAL probabilities and labels, evaluation probabilities and TRAIN log prior.
 
     The optional inference observer measures final scoring. An explicit CAL split supplies fit and holdout indices.
+    Optional CAN ID masks follow probability row order and use the raw local TRAIN vocabulary.
     """
     cal_probabilities: np.ndarray
     cal_labels: np.ndarray
@@ -82,6 +97,8 @@ class AdapterClient:
     log_prior: np.ndarray
     measure_inference: Callable | None = None
     cal_split: tuple[np.ndarray, np.ndarray] | None = None
+    cal_id_seen: np.ndarray | None = None
+    eval_id_seen: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +108,7 @@ class _CalibrationSplit:
     holdout_probabilities: np.ndarray
     holdout_labels: np.ndarray
     fit_indices: np.ndarray
+    holdout_indices: np.ndarray
 
 
 def _split_clients(clients, adapter, args):
@@ -106,6 +124,11 @@ def _split_clients(clients, adapter, args):
         ):
             raise ValueError('Valid integer CAL labels in the public class space required')
         adapter._probabilities(client.eval_probabilities)
+        if getattr(args, 'tabm_binary_head', None) == ID_GATE_MODE:
+            for seen, rows in ((client.cal_id_seen, len(cal)), (client.eval_id_seen, len(client.eval_probabilities))):
+                seen = np.asarray(seen)
+                if seen.shape != (rows,) or seen.dtype.kind != 'b':
+                    raise ValueError('The TRAIN ID gate requires aligned Boolean CAL and evaluation membership masks')
         if client.cal_split is None:
             fit, holdout = split_calibration(len(labels), args.cal_fit_fraction, args.seed + 335 + index)
         else:
@@ -118,7 +141,7 @@ def _split_clients(clients, adapter, args):
             all_rows = np.sort(np.concatenate((fit, holdout)))
             if not np.array_equal(all_rows, np.arange(len(cal))):
                 raise ValueError('Explicit CAL split must partition the client CAL rows')
-        splits.append(_CalibrationSplit(cal[fit], labels[fit], cal[holdout], labels[holdout], fit))
+        splits.append(_CalibrationSplit(cal[fit], labels[fit], cal[holdout], labels[holdout], fit, holdout))
     return splits
 
 
@@ -279,7 +302,8 @@ def _federated_round_vector(clients, splits, adapter, args, mode, diagnostics, p
 
 
 def _classify(mode, client, split, adapter, local_vector, args):
-    optimized = mode in CAL_THRESHOLD_MODES
+    id_gate = mode == 'base_threshold' and getattr(args, 'tabm_binary_head', None) == ID_GATE_MODE
+    optimized = mode in CAL_THRESHOLD_MODES and not id_gate
     source = 'CAL holdout' if optimized else 'native argmax' if mode == 'base' else 'fixed 0.5'
     calibration = {
         'threshold_source': source,
@@ -292,7 +316,29 @@ def _classify(mode, client, split, adapter, local_vector, args):
     if local_vector is not None:
         adapter.set_vector(local_vector)
     holdout = None
-    if optimized:
+    if id_gate:
+        holdout = split.holdout_probabilities
+        seen = np.asarray(client.cal_id_seen)[split.holdout_indices]
+        eval_seen = np.asarray(client.eval_id_seen)
+        decisions = hierarchical_decisions(holdout, id_thresholds(seen))
+        benign = split.holdout_labels == 0
+        calibration.update({
+            'threshold_source': 'fixed local TRAIN CAN ID membership',
+            'threshold': None,
+            'threshold_seen_id': SEEN_ID_THRESHOLD,
+            'threshold_unseen_id': UNSEEN_ID_THRESHOLD,
+            'threshold_floor': None,
+            'calibration_rule': ID_GATE_RULE,
+            'calibration_far': float(decisions['attack_alert'][benign].mean()) if benign.any() else None,
+            'target_far': args.target_far,
+            'target_far_role': 'reporting cap; the fixed gate is independent of CAL and evaluation scores',
+            'formal_conformal_guarantee': False,
+            'cal_holdout_id_seen_rows': int(seen.sum()),
+            'cal_holdout_id_unseen_rows': int((~seen).sum()),
+            'eval_id_seen_rows': int(eval_seen.sum()),
+            'eval_id_unseen_rows': int((~eval_seen).sum()),
+        })
+    elif optimized:
         holdout = split.holdout_probabilities
         if local_vector is not None:
             holdout = adapter.transform(holdout)
@@ -313,6 +359,10 @@ def _classify(mode, client, split, adapter, local_vector, args):
     if mode == 'base':
         predicted = eval_p.argmax(1)
         score = np.clip(eval_p[:, 1:].sum(1), 0, 1)
+    elif id_gate:
+        decisions = hierarchical_decisions(eval_p, id_thresholds(eval_seen))
+        predicted = decisions['predicted']
+        score = decisions['attack_score']
     else:
         decisions = hierarchical_decisions(eval_p, calibration['threshold'])
         predicted = decisions['predicted']
@@ -349,10 +399,38 @@ def _fixed_base_specs(modes, enabled):
     return FIXED_BASE_MODES
 
 
-def _fixed_base_decisions(split, receipt, base_val, adapted_cal, adapted_val):
-    """Use the original base threshold for CAL and the original base labels for VAL alarms."""
-    cal = hierarchical_decisions(split.holdout_probabilities, receipt['threshold'])
+def _fixed_base_decisions(split, receipt, base_val, adapted_cal, adapted_val, *, cal_id_seen=None):
+    """Keep the base CAL gate and VAL alarms while changing their attack subtype labels."""
+    cutoff = receipt['threshold']
+    if receipt.get('calibration_rule') == ID_GATE_RULE:
+        if cal_id_seen is None:
+            raise ValueError('Fixed-base ID gate labels require the same CAL membership mask')
+        cutoff = id_thresholds(cal_id_seen)
+    cal = hierarchical_decisions(split.holdout_probabilities, cutoff)
     return _fixed_alarm_labels(cal['predicted'], adapted_cal), _fixed_alarm_labels(base_val, adapted_val)
+
+
+def _record_fixed070(mode, index, client, split, adapted, predictions, scores, receipts):
+    """Apply one fixed detector alarm, changing only labels on already alerted rows."""
+    fixed_mode = PORTABLE_FIXED_MODES[mode]
+    if mode == 'base_threshold':
+        result = hierarchical_decisions(client.eval_probabilities, PORTABLE_FIXED_THRESHOLD)
+        base, score = result['predicted'], result['attack_score']
+    else:
+        base = _fixed_alarm_labels(predictions['base_fixed070'][index], adapted)
+        score = scores['base_fixed070'][index]
+    predictions[fixed_mode].append(base)
+    scores[fixed_mode].append(score)
+    cal_alert = hierarchical_decisions(split.holdout_probabilities, PORTABLE_FIXED_THRESHOLD)['attack_alert']
+    benign = split.holdout_labels == 0
+    receipts.append({
+        'mode': fixed_mode, 'client': index, 'threshold': PORTABLE_FIXED_THRESHOLD,
+        'threshold_source': 'fixed detector cutoff', 'calibration_rule': 'fixed_070',
+        'threshold_reference_mode': 'base_fixed070', 'subtype_source_mode': mode,
+        'benign_holdout_rows': int(benign.sum()), 'cal_holdout_rows': len(benign),
+        'calibration_far': float(cal_alert[benign].mean()) if benign.any() else None,
+        'calibration_fnr': float((~cal_alert[~benign]).mean()) if (~benign).any() else None,
+    })
 
 
 def _development_class_diagnostics(split, args):
@@ -406,13 +484,14 @@ def run_adapter_ablations(
     observe_scores=None,
     observe_operating=None,
     fixed_base_alarm=False,
+    portable_fixed_alarm=False,
 ):
     """Return mode/client predictions, binary scores and diagnostics without accessing eval labels."""
     clients = tuple(clients)
     modes = tuple(modes)
     if not clients or not modes or set(modes) - MODE_DESCRIPTIONS.keys() or len(set(modes)) != len(modes):
         raise ValueError('Expected client inputs and distinct, supported ablation modes')
-    fixed_modes = _fixed_base_specs(modes, fixed_base_alarm)
+    fixed_modes = _fixed_base_specs(modes, fixed_base_alarm or portable_fixed_alarm)
     first = np.asarray(clients[0].cal_probabilities)
     if first.ndim != 2:
         raise ValueError('A multiclass CAL probability matrix is required')
@@ -479,6 +558,8 @@ def run_adapter_ablations(
         vectors['without_prox'] = _personalize_vectors([anchor] * len(clients), clients, splits, adapter, args, 0.0)
 
     output_modes = (*modes, *fixed_modes.values())
+    if portable_fixed_alarm:
+        output_modes += tuple(PORTABLE_FIXED_MODES.values())
     predictions, scores = {mode: [] for mode in output_modes}, {mode: [] for mode in output_modes}
     base_calibration = []
     shared_scores = {}
@@ -501,15 +582,32 @@ def run_adapter_ablations(
             )
             if observe_scores is not None:
                 observe_scores(mode, index, eval_p, pred)
+            if portable_fixed_alarm and mode in PORTABLE_FIXED_MODES:
+                _record_fixed070(mode, index, client, split, eval_p, predictions, scores, diagnostics['calibration'])
+                benign = split.holdout_labels == 0
+                attack_scores = np.clip(holdout[~benign, 1:].sum(axis=1), 0, 1)
+                calibration['calibration_fnr'] = float((attack_scores <= calibration['threshold']).mean()) if len(
+                    attack_scores
+                ) else None
             if observe_operating is not None and holdout is not None:
-                observe_operating(mode, index, holdout, calibration, score, pred)
+                if calibration['calibration_rule'] == ID_GATE_RULE:
+                    cal_predictions = hierarchical_decisions(
+                        holdout, id_thresholds(np.asarray(client.cal_id_seen)[split.holdout_indices]),
+                    )['predicted']
+                    observe_operating(
+                        mode, index, holdout, calibration, score, pred, cal_predictions=cal_predictions,
+                    )
+                else:
+                    observe_operating(mode, index, holdout, calibration, score, pred)
             if fixed_modes and mode == 'base_threshold':
                 base_calibration.append(calibration)
             if mode in fixed_modes:
                 fixed_mode = fixed_modes[mode]
                 base_receipt = base_calibration[index]
                 fixed_cal, fixed_val = _fixed_base_decisions(
-                    split, base_receipt, predictions['base_threshold'][index], holdout, eval_p
+                    split, base_receipt, predictions['base_threshold'][index], holdout, eval_p,
+                    cal_id_seen=(np.asarray(client.cal_id_seen)[split.holdout_indices]
+                                 if base_receipt.get('calibration_rule') == ID_GATE_RULE else None),
                 )
                 base_score = scores['base_threshold'][index].copy()
                 predictions[fixed_mode].append(fixed_val)
