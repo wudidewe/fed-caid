@@ -4,9 +4,8 @@ The one-click experiment trains the five Hulk development cases again in its
 own run directory. External validation uses the frozen bundles from that same
 run. The `--preflight-only` mode checks the declaration before training.
 
-The [manifest template](../external/hulk_manifest.example.json) is a starting point. It contains no
-real capture, hash, custodian declaration or result and cannot be run as a manifest.
-Copy it to the configured manifest path and replace every placeholder using an
+Use the [manifest example](external_confirmation.md#data-supplied-by-the-capture-custodian)
+to create a local JSON file at the configured path. Supply the details of an
 independently acquired capture. Set `unseen_in_development` to true only when the
 custodian can attest to that fact. No benchmark split or renamed development file
 becomes an independent capture merely by appearing in this file.

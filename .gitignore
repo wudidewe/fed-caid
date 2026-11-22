@@ -2,9 +2,8 @@
 /dataset/*
 !/dataset/README.md
 /downloads/
-/external/*
-!/external/hulk_manifest.example.json
-!/external/lan_manifest.example.json
+/external/
+/tests/
 *.zip
 *.7z
 *.rar

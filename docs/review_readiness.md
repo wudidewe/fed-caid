@@ -13,7 +13,7 @@ uses a separate full-weight donor. Use the corresponding communication rows for 
 | Aggregation protocol | Local subprocess sharing, TCP protocol validation and failure tests | Trusted local host and noncolluding collectors |
 | Software comparison | Primary source feature comparison | Functional comparison |
 | Scale and cost | Fixed total and fixed client budgets, logical payload and framed application bytes | Separate detector, adapter and transport measurements |
-| Reproducibility | Unit tests, CPU smoke tests, wheel installation checker, CI and run manifests | The run receipt identifies the source, settings and available inputs. |
+| Reproducibility | CPU demo and integration checks, wheel installation checker, CI and run manifests | The run receipt identifies the source, settings and available inputs. |
 
 The Windows and Linux CI jobs use `tools/check_installed_wheel.py --resolve-dependencies --cpu-torch`
 to install the wheel and its declared dependencies into a clean temporary venv,
@@ -35,8 +35,8 @@ sees a random share, roster/dimensions and protocol metadata. The coordinator
 learns the complete-roster aggregate. The trusted local host can access local
 data. Collusion, malicious updates/coordinator, host compromise, DP, transport
 authentication/confidentiality and dropout recovery are outside current scope.
-Uniform-share algebra and boundary tests support this limited claim, not a
-general production security certification.
+The [unit suite used for the manuscript](https://github.com/wudidewe/fed-caid/tree/29fc027963374bb05b9d3f783ad942e59bd8323d/tests)
+checks single share uniformity and failure behavior for the reported revision.
 
 | Role | Model | What the role sees or controls |
 | --- | --- | --- |

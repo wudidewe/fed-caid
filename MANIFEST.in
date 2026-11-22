@@ -1,10 +1,8 @@
 include README.md LICENSE Licence.txt requirements.txt pyproject.toml CITATION.cff CHANGELOG.md
 include main.py
-include external/hulk_manifest.example.json external/lan_manifest.example.json
 include tools/check_installed_wheel.py
 include dataset/README.md
 recursive-include docs *.md
 recursive-include src *.py *.txt *.md
 recursive-include src/fedcaid_resources *.json *.csv
-recursive-include tests test_*.py
 global-exclude *.py[cod]

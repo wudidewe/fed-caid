@@ -22,10 +22,10 @@ Example manifest. Replace the placeholder source paths, hashes and custodian nam
   "exact_overlap_policy": "reject",
   "captures": [{
     "capture_id": "capture202611-a",
-    "prepared_csv": "external/capture-a-prepared.csv",
+    "prepared_csv": "capture-a-prepared.csv",
     "sha256": "<prepared SHA256>",
     "raw_files": [{
-      "path": "external/capture-a-original.csv",
+      "path": "capture-a-original.csv",
       "sha256": "<original SHA256>"
     }]
   }],
@@ -48,8 +48,9 @@ For an absolute operating requirement, add `min_absolute_target_f1` or `min_abso
 
 ## Seal, then confirm
 
-Complete the [Hulk manifest](../external/hulk_manifest.example.json) and save it
-as `external/hulk_manifest.json`. With the benchmark data in place, run
+Create `external/` locally and save the completed example above as
+`external/hulk_manifest.json`, or pass its path with `--hulk-manifest`.
+With the benchmark data in place, run
 [main.py](../main.py).
 The entry locates the five version-7 frozen bundles through the attribution receipt,
 validates the manifest, seals the declared plan and then runs confirmation.

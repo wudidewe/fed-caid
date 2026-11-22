@@ -23,8 +23,7 @@ benchmark transport, not a replacement silently applied to training.
 
 ## Same-host check
 
-The protocol regression suite exercises the same-host benchmark, whose library
-function starts two bounded collector subprocesses on `127.0.0.1` using
+The same-host benchmark starts two bounded collector subprocesses on `127.0.0.1` using
 automatically assigned ports. Each roster size uses a fresh connection/session.
 The output directory must be new; a failure writes `complete: false` and the
 error to `protocol_summary.json`. It never marks partial measurements complete.
@@ -44,9 +43,20 @@ validation.
 
 ## User-controlled LAN endpoints
 
-For a full review run, copy `external/lan_manifest.example.json` to
-`external/lan_manifest.json` and record the actual orchestrator, two collector
-hosts and endpoints. Start the two collectors using the commands below with
+For a physical LAN run, create `external/` locally and save the following JSON as
+`external/lan_manifest.json`. Fill in the actual topology, hosts and endpoints.
+
+```json
+{
+  "version": 1,
+  "topology": "<network topology and conditions>",
+  "orchestrator": {"physical_host_id": "<host 1>", "os": "<os>", "cpu": "<cpu>", "ram": "<ram>"},
+  "collector_a": {"physical_host_id": "<host 2>", "os": "<os>", "cpu": "<cpu>", "ram": "<ram>", "endpoint": "<address>:8761"},
+  "collector_b": {"physical_host_id": "<host 3>", "os": "<os>", "cpu": "<cpu>", "ram": "<ram>", "endpoint": "<address>:8761"}
+}
+```
+
+Start the two collectors using the commands below with
 `--sessions 6` for the two head dimensions (1,035 and 690), then run
 `main.py` on the orchestrator with the benchmark data ready. Each dimension measures 30 rounds at 3, 5 and 10
 logical clients. `--lan-manifest` selects another declaration, while
@@ -83,16 +93,8 @@ run on each host. Packet-capture bytes, if measured, need a separate field and
 must not be confused with the application-byte counter. No multi-host result is
 claimed by the implementation or the default local test.
 
-## Regression tests
+## Regression checks for the reported experiment
 
-```text
-python -m unittest discover -s tests -p test_revision_protocol_validation.py -v
-```
-
-The tests check real local TCP round equivalence, incomplete-roster failure,
-bounded framing, duplicate/stale/invalid shares, and existing local-IPC failure
-contracts including worker exit and deterministic timeout handling. Existing
-`test_revision_adaptation.py` supplies exhaustive toy-field single-share
-uniformity and missing-client failure tests. Together these provide executable
-evidence for the stated construction and failure behavior; they are not a
-cryptographic audit or proof of malicious-party security.
+The [unit suite for the reported revision](https://github.com/wudidewe/fed-caid/tree/29fc027963374bb05b9d3f783ad942e59bd8323d/tests)
+checks TCP round equivalence, roster failures, invalid shares and single share uniformity.
+Run `python main.py --smoke` for the synthetic integration check in the current checkout.

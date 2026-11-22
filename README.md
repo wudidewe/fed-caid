@@ -81,7 +81,6 @@ benchmark and the predeclared independent confirmation.
 ## Check the installation
 
 ```sh
-python -m unittest discover -s tests -v
 python main.py --demo
 python main.py --smoke
 ```
@@ -89,7 +88,7 @@ python main.py --smoke
 `--demo` runs a small synthetic CPU example and saves a receipt in
 `outputs/fedcaid_demo/`. `--smoke` exercises the synthetic integration suite.
 Both print `synthetic_only=True`. These checks require Python dependencies and
-run without the source CSVs.
+run without the source CSVs. The [364 unit tests used for the reported experiment](https://github.com/wudidewe/fed-caid/tree/29fc027963374bb05b9d3f783ad942e59bd8323d/tests) are available in the corresponding source revision.
 
 ## Results and follow up
 
@@ -103,7 +102,8 @@ Start with `outputs/fedcaid_review/run_*/report/SUMMARY.md`.
 | `report/tables/` | Per stage working points, class support and confusion counts |
 
 Predeclared independent Hulk confirmation and LAN measurements require separate
-declarations under `external/`. When those declarations are absent, the local
+local JSON files. Create `external/` when supplying a declaration there, or
+pass its path with `--hulk-manifest` or `--lan-manifest`. Without those files the local
 run can finish with status `completed_with_pending`. The command returns exit
 code 2 for failures or pending required stages. See the
 [independent capture guide](docs/external_preflight.md) and the
