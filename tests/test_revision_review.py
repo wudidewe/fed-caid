@@ -22,7 +22,7 @@ class ReviewEntryTests(unittest.TestCase):
 
     def test_no_datasets_require_explicit_synthetic_preview(self):
         imports_before = sys.path.copy()
-        with TemporaryDirectory() as directory, patch.object(entry, "PROJECT", Path(directory)):
+        with TemporaryDirectory() as directory, patch.object(entry, "PROJECT", Path(directory).resolve()):
             self.assertEqual(entry.main([]), 2)
             self.demo.assert_not_called()
             self.assertIn('--demo', self.stderr.getvalue())
@@ -33,7 +33,7 @@ class ReviewEntryTests(unittest.TestCase):
 
     def test_partial_dataset_does_not_launch_demo_or_train(self):
         with TemporaryDirectory() as directory:
-            project = Path(directory)
+            project = Path(directory).resolve()
             marker = project / "dataset" / "CIC-UNSW-NB15" / "CICFlowMeter_out.csv"
             marker.parent.mkdir(parents=True)
             marker.touch()
@@ -45,7 +45,7 @@ class ReviewEntryTests(unittest.TestCase):
 
     def test_ready_datasets_select_fresh_full_review(self):
         with TemporaryDirectory() as directory:
-            project = Path(directory)
+            project = Path(directory).resolve()
             with (
                 patch.object(entry, "PROJECT", project),
                 patch.object(entry, "_dataset_files", return_value=(4, ())),
@@ -60,7 +60,7 @@ class ReviewEntryTests(unittest.TestCase):
         from src.revision_hulk_2018 import DEFAULT_CAPTURE
 
         with TemporaryDirectory() as directory:
-            project = Path(directory)
+            project = Path(directory).resolve()
             capture = project / DEFAULT_CAPTURE
             capture.parent.mkdir(parents=True)
             capture.touch()
@@ -86,7 +86,7 @@ class ReviewEntryTests(unittest.TestCase):
         self.full.assert_not_called()
 
     def test_explicit_full_review_requires_real_inputs(self):
-        with TemporaryDirectory() as directory, patch.object(entry, "PROJECT", Path(directory)):
+        with TemporaryDirectory() as directory, patch.object(entry, "PROJECT", Path(directory).resolve()):
             self.assertEqual(entry.main(["--full-review"]), 2)
         self.demo.assert_not_called()
         self.full.assert_not_called()
@@ -148,10 +148,10 @@ class DownloadDemoTests(unittest.TestCase):
     def test_demo_can_allocate_output_for_the_native_runner(self):
         with (
             TemporaryDirectory() as directory,
-            patch.object(entry, "PROJECT", Path(directory)),
+            patch.object(entry, "PROJECT", Path(directory).resolve()),
             patch("src.revision_next.main", side_effect=self._synthetic_run),
             redirect_stdout(StringIO()),
         ):
             self.assertEqual(entry._demo(), 0)
-            outputs = (Path(directory) / "outputs" / "fedcaid_demo").rglob("complete.json")
+            outputs = (Path(directory).resolve() / "outputs" / "fedcaid_demo").rglob("complete.json")
             self.assertEqual(len(list(outputs)), 1)
